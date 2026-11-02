@@ -1,13 +1,13 @@
 """
 pipeline.py
-Version: Step 2, v0.2.0 (2026-11-02). Code version 2026-11-step2.
+Version: Step 3, v0.3.0 (2026-11-02). Code version 2026-11-step3.
 Spec: README v3.1 DRAFT, sections 4, 5 and 10.
 
 Purpose: the orchestrator. Sequences the per-ticker stages, handles failures,
 ranks the results and returns plain data. It contains no scoring maths, no
 data fetching and no UI code.
 
-Status: every stage is a STUB except the store (step 2). Real modules replace
+Status: every stage is a STUB except the store (step 2) and the scorer (step 3). Real modules replace
 the stubs one step at a time by passing a different `Stages` object; nothing
 else changes.
 
@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Optional
 
 import config
+import score_card
 from errors import PermanentError, TransientError
 from store import Store
 
@@ -103,6 +104,8 @@ class RunResult:
                 "Ticker": r.ticker,
                 "Status": r.status,
                 "Total": b.total if b else None,
+                "Rating": (score_card.rating_for_score(b.total)
+                           if b and b.total is not None else None),
                 "Long-term": b.long_term if b else None,
                 "Short-term": b.short_term if b else None,
                 "Coverage %": b.coverage_pct if b else None,
@@ -183,6 +186,46 @@ SIM_TRANSIENT = {"STALE429", "NOPRIOR429"}
 SIM_PERMANENT = {"FAILPERM"}
 
 
+def score_stage_v21(ticker, analysis, financials, indicators, manual,
+                    horizon_days) -> ScoreBreakdown:
+    """Score stage: runs the recovered v2.1 quality and governance scorer.
+
+    The scorer's output is mapped onto ScoreBreakdown. The 55/45 fields stay
+    None: v2.1 has no short-term timing layer (see the Price-Impact score, later).
+    Peers are not passed, so the valuation signal scores at the prior until a
+    batch supplies peer statistics.
+    """
+    result = score_card.compute_score(financials or {}, analysis or {}, peers=None)
+    bd = result["breakdown"]
+    labels = [f"Quality and governance score, model {bd['scoring_model']} (0 to 100)"]
+    if analysis is None:
+        labels.append("No LLM analysis: LLM component scored at the prior")
+    if (financials or {}).get("stub"):
+        labels.append("STUB data: every signal scored at the prior")
+    if getattr(config, "UNVERIFIED_GOVERNANCE_CAP", None) is None:
+        labels.append("Unverified-governance cap is OFF (value not recovered)")
+    caps = [n for n in bd["governance_notes"] if n.startswith("Capped at")]
+    components = {
+        "llm_component": {"points": bd["llm_component"], "max": 60.0},
+        "fin_level": {"points": bd["fin_level"], "max": 20.0},
+        "fin_direction": {"points": bd["fin_direction"], "max": 14.0},
+        "fin_valuation": {"points": bd["fin_valuation"], "max": 6.0},
+        "governance_penalty": {"points": bd["governance_penalty"]},
+        "raw_score": bd["raw_score"],
+        "llm_coverage": bd["llm_coverage"],
+        "notes": {
+            "factor_notes": bd["factor_notes"],
+            "financial_notes": bd["financial_notes"],
+            "governance_notes": bd["governance_notes"],
+        },
+    }
+    return ScoreBreakdown(
+        long_term=None, short_term=None, total=result["score"],
+        components=components, caps_applied=caps, gates={},
+        coverage_pct=None, horizon_days=horizon_days, labels=labels,
+    )
+
+
 def default_store() -> Store:
     """The real file-backed store (step 2)."""
     return Store(config.STORE_DIR)
@@ -231,13 +274,6 @@ def make_stub_stages(store: Any = None) -> tuple[Stages, Any]:
             raise PermanentError("simulated permanent analyser failure")
         return {"stub": True, "note": "no real analysis yet"}
 
-    @_stub
-    def score(ticker, analysis, financials, indicators, manual, horizon_days) -> ScoreBreakdown:
-        return ScoreBreakdown(
-            horizon_days=horizon_days,
-            labels=["STUB: scoring not implemented (step 3)"],
-        )
-
     if use_memory_store:
         @_stub
         def load_prior(ticker: str) -> Optional[dict]:
@@ -251,7 +287,7 @@ def make_stub_stages(store: Any = None) -> tuple[Stages, Any]:
 
     stages = Stages(
         fetch=fetch, indicators=indicators, manual_inputs=manual_inputs,
-        filings_context=filings_context, analyse=analyse, score=score,
+        filings_context=filings_context, analyse=analyse, score=score_stage_v21,
         load_prior=load_prior, save=save,
     )
     return stages, store

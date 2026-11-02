@@ -1,6 +1,6 @@
 """
 app.py
-Version: Step 2, v0.2.0 (2026-11-02). Code version 2026-11-step2.
+Version: Step 3, v0.3.0 (2026-11-02). Code version 2026-11-step3.
 Spec: README v3.1 DRAFT, sections 5.3 and 13 (Streamlit replaces the desktop
 GUI; this is a spec change awaiting recording in v3.2).
 
@@ -102,9 +102,10 @@ def render_result(result: pipeline.RunResult) -> None:
 def main() -> None:
     st.title("Equity Growth Analyst")
     st.warning(
-        "Skeleton: every stage except the store is a stub. There is no real "
-        "data, analysis or score yet; the table below only proves the flow, "
-        "the failure rules, the ranking and the saved records."
+        "Skeleton: only the store and the scorer are real. Data, filings and "
+        "AI analysis are still stubs, so every signal is scored at the 35% "
+        "prior and each demo ticker shows the same total. The table proves "
+        "the flow, the failure rules, the ranking and the saved records."
     )
 
     try:

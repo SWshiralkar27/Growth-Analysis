@@ -1,6 +1,6 @@
 """
 config.py
-Version: Step 2, v0.2.0 (2026-11-02). Code version 2026-11-step2.
+Version: Step 3, v0.3.0 (2026-11-02). Code version 2026-11-step3.
 Spec: README v3.1 DRAFT (v2.0 is binding where it differs).
 
 Purpose: constants, paths, versions, secret lookup, start-up checks.
@@ -22,7 +22,7 @@ from pathlib import Path
 from errors import ConfigError
 
 # ---------------------------------------------------------------- versions
-CODE_VERSION = "2026-11-step2"
+CODE_VERSION = "2026-11-step3"
 SPEC_VERSION = "v3.1-draft"
 PROMPT_VERSION = "UNSET"  # set at step 5 (gemini_analyser); v2.0 value [FILL FROM v2.0]
 SCHEMA_VERSION = 1
@@ -81,6 +81,12 @@ SHORT_TERM_POINTS = 45
 # Deliberately EMPTY: weights are not approved (OD-1, OD-17) and README v2.0
 # values are not available. score_card.py (step 3) fills this once approved.
 COMPONENT_WEIGHTS: dict[str, tuple[str, float]] = {}
+
+# v2.1 scorer settings (score_card.py reads these; see its _DEFAULTS).
+SCORE_PARAMS: dict = {}  # empty = use the recovered v2.1 defaults unchanged
+# Cap applied when governance was never actually checked. The real value lived in
+# the lost config.py. [FILL FROM old config.py] None means this cap is OFF.
+UNVERIFIED_GOVERNANCE_CAP = None
 
 # ---------------------------------------------------------------- secrets
 # Logical name -> environment variable name. [FILL FROM v2.0]

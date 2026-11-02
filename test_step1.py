@@ -64,7 +64,8 @@ class PipelineTests(unittest.TestCase):
         r = run.results[0]
         self.assertEqual(r.status, "ok")
         self.assertEqual(r.rank, 1)
-        self.assertIn("score", r.stubbed_stages)
+        self.assertIn("fetch", r.stubbed_stages)
+        self.assertNotIn("score", r.stubbed_stages)  # the scorer is real from step 3
         self.assertIn("FAKE", store.records)
 
     def test_transient_error_keeps_prior_and_marks_stale(self):
