@@ -1,6 +1,6 @@
 """
 errors.py
-Version: Step 1, v0.1.0 (2026-11-01). Code version 2026-11-step1.
+Version: Step 2, v0.2.0 (2026-11-02). Code version 2026-11-step2.
 Spec: README v3.1 DRAFT, sections 5.2 and 9.
 
 Purpose: typed errors shared by all modules. Plain exceptions, no logic.
@@ -26,3 +26,10 @@ class PermanentError(EngineError):
 
 class ConfigError(EngineError):
     """The configuration is inconsistent (for example a broken 55/45 split)."""
+
+
+class StoreError(PermanentError):
+    """The store could not read or write a record safely.
+
+    The prior record on disk is never changed when this is raised.
+    """

@@ -1,8 +1,8 @@
 # Equity Growth Analyst
 
-Version: Step 1, v0.1.0 (2026-11-01). Code version 2026-11-step1. Spec: README v3.1 DRAFT.
+Version: Step 2, v0.2.0 (2026-11-02). Code version 2026-11-step2. Spec: README v3.1 DRAFT.
 
-Python research engine for Indian listed equities. **Step 1 is a skeleton**: config, an orchestrator with stub stages, and a Streamlit front end. There is no real data, analysis or scoring yet.
+Python research engine for Indian listed equities. **Steps 1 and 2 are a skeleton**: config, an orchestrator with stub stages, an atomic file store, and a Streamlit front end. There is no real data, analysis or scoring yet.
 
 ## Run locally
 
@@ -13,7 +13,7 @@ Python research engine for Indian listed equities. **Step 1 is a skeleton**: con
 
 ## Run the tests (no network, no key, no Streamlit needed)
 
-    python -m unittest discover -s tests -v
+    python -m unittest discover -s . -p "test_*.py" -v
 
 ## Deploy on Streamlit Community Cloud
 
@@ -27,6 +27,7 @@ Python research engine for Indian listed equities. **Step 1 is a skeleton**: con
 
 - **Storage is temporary on Streamlit Community Cloud.** Files written to `data/` can vanish on restart or redeploy. Until a persistent backend is added behind `store.py`, treat the cloud app as a demo and run locally for real work.
 - **Batch runs** (about 90 tickers overnight) do not belong on Streamlit Cloud. `batch_runner.py` will be a separate command-line script (run locally or on a scheduled GitHub Actions job).
+- The store keeps one JSON file per ticker. A save is written to a temp file and swapped in, so a crash or an error never damages a prior record.
 - Secrets come from environment variables only. No key is ever written in code.
 
 ## Layout
@@ -34,8 +35,10 @@ Python research engine for Indian listed equities. **Step 1 is a skeleton**: con
     app.py            Streamlit front end (no logic)
     pipeline.py       orchestrator: stages, failure rules, ranking
     config.py         constants, paths, versions, start-up checks
-    errors.py         typed errors (Transient, Permanent, Config)
-    tests/            unit tests
+    errors.py         typed errors (Transient, Permanent, Config, Store)
+    store.py          atomic per-ticker records (data/store/)
+    test_step1.py     tests for config, tickers, pipeline
+    test_store.py     tests for the store and the 429 rule
 
 ## Demo tickers (stub stages)
 

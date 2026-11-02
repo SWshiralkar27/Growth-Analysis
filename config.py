@@ -1,6 +1,6 @@
 """
 config.py
-Version: Step 1, v0.1.0 (2026-11-01). Code version 2026-11-step1.
+Version: Step 2, v0.2.0 (2026-11-02). Code version 2026-11-step2.
 Spec: README v3.1 DRAFT (v2.0 is binding where it differs).
 
 Purpose: constants, paths, versions, secret lookup, start-up checks.
@@ -22,7 +22,7 @@ from pathlib import Path
 from errors import ConfigError
 
 # ---------------------------------------------------------------- versions
-CODE_VERSION = "2026-11-step1"
+CODE_VERSION = "2026-11-step2"
 SPEC_VERSION = "v3.1-draft"
 PROMPT_VERSION = "UNSET"  # set at step 5 (gemini_analyser); v2.0 value [FILL FROM v2.0]
 SCHEMA_VERSION = 1

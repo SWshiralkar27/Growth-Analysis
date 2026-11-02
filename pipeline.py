@@ -1,14 +1,15 @@
 """
 pipeline.py
-Version: Step 1, v0.1.0 (2026-11-01). Code version 2026-11-step1.
+Version: Step 2, v0.2.0 (2026-11-02). Code version 2026-11-step2.
 Spec: README v3.1 DRAFT, sections 4, 5 and 10.
 
 Purpose: the orchestrator. Sequences the per-ticker stages, handles failures,
 ranks the results and returns plain data. It contains no scoring maths, no
 data fetching and no UI code.
 
-Step 1 status: every stage is a STUB. Real modules replace the stubs one step
-at a time by passing a different `Stages` object; nothing else changes.
+Status: every stage is a STUB except the store (step 2). Real modules replace
+the stubs one step at a time by passing a different `Stages` object; nothing
+else changes.
 
 Rules implemented here (README 5.2):
   - A stage failure is recorded per ticker; one bad ticker never stops a run.
@@ -22,6 +23,7 @@ Rules implemented here (README 5.2):
 """
 from __future__ import annotations
 
+import copy
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -31,6 +33,7 @@ from typing import Any, Callable, Iterable, Optional
 
 import config
 from errors import PermanentError, TransientError
+from store import Store
 
 ProgressCallback = Callable[[str, str, str], None]
 
@@ -154,15 +157,16 @@ def _stub(fn):
     return fn
 
 
+DEMO_PRIOR = {"analysis": {"stub": True, "note": "seeded prior analysis"},
+              "saved_at": "seeded"}
+
+
 class StubStore:
-    """In-memory stand-in for store.py (step 2). Seeded with one prior record."""
+    """In-memory store for tests. Seeded with one prior record (STALE429)."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self.records: dict[str, dict] = {
-            "STALE429": {"analysis": {"stub": True, "note": "seeded prior analysis"},
-                         "saved_at": "seeded"},
-        }
+        self.records: dict[str, dict] = {"STALE429": copy.deepcopy(DEMO_PRIOR)}
 
     def load(self, ticker: str) -> Optional[dict]:
         with self._lock:
@@ -179,8 +183,28 @@ SIM_TRANSIENT = {"STALE429", "NOPRIOR429"}
 SIM_PERMANENT = {"FAILPERM"}
 
 
-def make_stub_stages() -> tuple[Stages, StubStore]:
-    store = StubStore()
+def default_store() -> Store:
+    """The real file-backed store (step 2)."""
+    return Store(config.STORE_DIR)
+
+
+def seed_demo_prior(store: Any) -> None:
+    """Make sure the STALE429 demo ticker has a stored prior. Remove at step 5."""
+    try:
+        if store.load("STALE429") is None:
+            store.save("STALE429", copy.deepcopy(DEMO_PRIOR))
+    except Exception:
+        pass  # demo scaffolding only; it must never break a run
+
+
+def make_stub_stages(store: Any = None) -> tuple[Stages, Any]:
+    """Stub stages. With store=None an in-memory StubStore is used (tests).
+    Pass default_store() to use the real file-backed store."""
+    use_memory_store = store is None
+    if use_memory_store:
+        store = StubStore()
+    else:
+        seed_demo_prior(store)
 
     @_stub
     def fetch(ticker: str) -> dict:
@@ -205,7 +229,7 @@ def make_stub_stages() -> tuple[Stages, StubStore]:
             raise TransientError("simulated 429 from the analyser")
         if ticker in SIM_PERMANENT:
             raise PermanentError("simulated permanent analyser failure")
-        return {"stub": True, "note": "no real analysis in step 1"}
+        return {"stub": True, "note": "no real analysis yet"}
 
     @_stub
     def score(ticker, analysis, financials, indicators, manual, horizon_days) -> ScoreBreakdown:
@@ -214,13 +238,16 @@ def make_stub_stages() -> tuple[Stages, StubStore]:
             labels=["STUB: scoring not implemented (step 3)"],
         )
 
-    @_stub
-    def load_prior(ticker: str) -> Optional[dict]:
-        return store.load(ticker)
+    if use_memory_store:
+        @_stub
+        def load_prior(ticker: str) -> Optional[dict]:
+            return store.load(ticker)
 
-    @_stub
-    def save(ticker: str, record: dict) -> None:
-        store.save(ticker, record)
+        @_stub
+        def save(ticker: str, record: dict) -> None:
+            store.save(ticker, record)
+    else:
+        load_prior, save = store.load, store.save  # real store: not marked as stubs
 
     stages = Stages(
         fetch=fetch, indicators=indicators, manual_inputs=manual_inputs,

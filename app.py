@@ -1,6 +1,6 @@
 """
 app.py
-Version: Step 1, v0.1.0 (2026-11-01). Code version 2026-11-step1.
+Version: Step 2, v0.2.0 (2026-11-02). Code version 2026-11-step2.
 Spec: README v3.1 DRAFT, sections 5.3 and 13 (Streamlit replaces the desktop
 GUI; this is a spec change awaiting recording in v3.2).
 
@@ -34,8 +34,10 @@ def start_worker(tickers: list[str], horizon_days: int, q: "queue.Queue") -> thr
 
     def target() -> None:
         try:
+            stages, _ = pipeline.make_stub_stages(store=pipeline.default_store())
             result = pipeline.run_pipeline(
                 tickers, horizon_days,
+                stages=stages,
                 on_progress=on_progress,
                 max_workers=config.DEFAULT_WORKERS,
             )
@@ -100,9 +102,9 @@ def render_result(result: pipeline.RunResult) -> None:
 def main() -> None:
     st.title("Equity Growth Analyst")
     st.warning(
-        "Step 1 skeleton: every stage is a stub. There is no real data, "
-        "analysis or score yet; the table below only proves the flow, the "
-        "failure rules and the ranking."
+        "Skeleton: every stage except the store is a stub. There is no real "
+        "data, analysis or score yet; the table below only proves the flow, "
+        "the failure rules, the ranking and the saved records."
     )
 
     try:
@@ -121,6 +123,10 @@ def main() -> None:
             config.DEFAULT_HORIZON_DAYS,
         )
         st.caption(f"Gemini key present: {'yes' if config.has_secret('gemini_api_key') else 'no'}")
+        try:
+            st.caption(f"Stored analyses: {len(pipeline.default_store().list_tickers())}")
+        except Exception:
+            st.caption("Stored analyses: unavailable")
         st.caption(f"Code {config.CODE_VERSION} | spec {config.SPEC_VERSION}")
 
     raw = st.text_area(
