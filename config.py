@@ -1,6 +1,6 @@
 """
 config.py
-Version: Step 3, v0.3.0 (2026-11-02). Code version 2026-11-step3.
+Version: Step 4, v0.4.0 (2026-11-02). Code version 2026-11-step4.
 Spec: README v3.1 DRAFT (v2.0 is binding where it differs).
 
 Purpose: constants, paths, versions, secret lookup, start-up checks.
@@ -22,7 +22,7 @@ from pathlib import Path
 from errors import ConfigError
 
 # ---------------------------------------------------------------- versions
-CODE_VERSION = "2026-11-step3"
+CODE_VERSION = "2026-11-step4"
 SPEC_VERSION = "v3.1-draft"
 PROMPT_VERSION = "UNSET"  # set at step 5 (gemini_analyser); v2.0 value [FILL FROM v2.0]
 SCHEMA_VERSION = 1
@@ -65,6 +65,16 @@ DEFAULT_HORIZON_DAYS = 30     # UI starting value only; not a scoring input
 GUI_MAX_TICKERS = 10          # SPEC: GUI takes 1 to 10 tickers
 DEFAULT_WORKERS = 1           # worker threads; v2.0 value [FILL FROM v2.0]
 TICKER_PATTERN = re.compile(r"^[A-Z0-9&.\-]{1,20}$")
+
+# ------------------------------------------------- filings and context builder
+# Values from the README v2.0 configuration reference (recovered from the project files).
+FILINGS_FOLDER = str(FILINGS_DIR)   # where TICKER_*.pdf files are looked up
+MAX_PAGE_CHARS = 6_000              # characters kept per page
+MAX_PROMPT_CHARS = 350_000          # interactive context budget
+BATCH_MAX_PROMPT_CHARS = 120_000    # batch context budget (about 30k tokens)
+PAGES_PER_SECTION = 6
+CONTEXT_GOVERNANCE_SHARE = 0.30     # share of the budget reserved for governance pages
+CONTEXT_BUSINESS_SHARE = 0.45       # share reserved for growth pages (plus unused governance share)
 
 # ---------------------------------------------------------------- statuses
 STATUS_OK = "ok"

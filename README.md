@@ -1,8 +1,8 @@
 # Equity Growth Analyst
 
-Version: Step 3, v0.3.0 (2026-11-02). Code version 2026-11-step3. Spec: README v3.1 DRAFT.
+Version: Step 4, v0.4.0 (2026-11-02). Code version 2026-11-step4. Spec: README v3.1 DRAFT.
 
-Python research engine for Indian listed equities. **Steps 1 to 3 are a skeleton with a real store and a real scorer**: config, an orchestrator, an atomic file store, the recovered v2.1 scorer, and a Streamlit front end. Data fetching, filings and the AI analysis are still stubs, so every signal is scored at the prior.
+Python research engine for Indian listed equities. **Steps 1 to 4 are a skeleton with a real store, scorer and filings reader**: config, an orchestrator, an atomic file store, the recovered v2.1 scorer, the filings reader, and a Streamlit front end. Data fetching and the AI analysis are still stubs, so every signal is scored at the prior.
 
 ## Run locally
 
@@ -38,9 +38,11 @@ Python research engine for Indian listed equities. **Steps 1 to 3 are a skeleton
     errors.py         typed errors (Transient, Permanent, Config, Store)
     store.py          atomic per-ticker records (data/store/)
     score_card.py     the recovered v2.1 quality and governance scorer (unchanged logic)
+    pdf_extractor.py  reads filing PDFs and builds the AI context (unchanged logic)
     test_step1.py     tests for config, tickers, pipeline
     test_store.py     tests for the store and the 429 rule
     test_score_card.py  tests for the scorer (ported from the old test_patches.py)
+    test_pdf_extractor.py  tests for the filings reader and context builder
 
 ## Demo tickers (stub stages)
 

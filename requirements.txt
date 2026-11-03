@@ -1,3 +1,4 @@
-# Step 1 dependencies. Later steps add yfinance, a PDF library and the Gemini client.
+# Dependencies. Later steps add yfinance and the Gemini client.
 streamlit>=1.36
 pandas>=2.0
+pypdf>=4.0

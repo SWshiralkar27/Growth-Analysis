@@ -1,13 +1,14 @@
 """
 pipeline.py
-Version: Step 3, v0.3.0 (2026-11-02). Code version 2026-11-step3.
+Version: Step 4, v0.4.0 (2026-11-02). Code version 2026-11-step4.
 Spec: README v3.1 DRAFT, sections 4, 5 and 10.
 
 Purpose: the orchestrator. Sequences the per-ticker stages, handles failures,
 ranks the results and returns plain data. It contains no scoring maths, no
 data fetching and no UI code.
 
-Status: every stage is a STUB except the store (step 2) and the scorer (step 3). Real modules replace
+Status: every stage is a STUB except the store (step 2), the scorer (step 3) and the
+filings reader (step 4). Real modules replace
 the stubs one step at a time by passing a different `Stages` object; nothing
 else changes.
 
@@ -24,6 +25,8 @@ Rules implemented here (README 5.2):
 from __future__ import annotations
 
 import copy
+import glob
+import os
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -32,6 +35,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Optional
 
 import config
+import pdf_extractor
 import score_card
 from errors import PermanentError, TransientError
 from store import Store
@@ -226,6 +230,35 @@ def score_stage_v21(ticker, analysis, financials, indicators, manual,
     )
 
 
+def filings_context_stage(ticker: str) -> dict:
+    """Filings stage: read TICKER_*.pdf (or TICKER.pdf) and build the LLM context.
+
+    Returns plain data: {"text", "meta", "documents", "unreadable"}. With no filings
+    the text is empty and meta says so. Unreadable files are listed, never raised.
+    """
+    folder = config.FILINGS_FOLDER
+    paths = glob.glob(os.path.join(folder, f"{glob.escape(ticker)}_*.pdf"))
+    exact = os.path.join(folder, f"{ticker}.pdf")
+    if os.path.exists(exact) and exact not in paths:
+        paths.append(exact)
+    paths.sort(reverse=True)  # newest-dated names first
+
+    documents, unreadable = [], []
+    for path in paths:
+        doc = pdf_extractor.extract_document(path)
+        if doc.get("pages"):
+            documents.append(doc)
+        else:
+            unreadable.append((doc.get("document"), doc.get("error") or "no extractable text (scanned?)"))
+
+    if documents:
+        text, meta = pdf_extractor.build_context(documents, max_chars=config.MAX_PROMPT_CHARS)
+    else:
+        text, meta = pdf_extractor.build_context([], max_chars=config.MAX_PROMPT_CHARS)
+    return {"text": text, "meta": meta,
+            "documents": [d["document"] for d in documents], "unreadable": unreadable}
+
+
 def default_store() -> Store:
     """The real file-backed store (step 2)."""
     return Store(config.STORE_DIR)
@@ -263,10 +296,6 @@ def make_stub_stages(store: Any = None) -> tuple[Stages, Any]:
         return {}
 
     @_stub
-    def filings_context(ticker: str) -> dict:
-        return {"text": "", "stub": True}
-
-    @_stub
     def analyse(ticker: str, context: dict, financials: dict) -> dict:
         if ticker in SIM_TRANSIENT:
             raise TransientError("simulated 429 from the analyser")
@@ -287,7 +316,7 @@ def make_stub_stages(store: Any = None) -> tuple[Stages, Any]:
 
     stages = Stages(
         fetch=fetch, indicators=indicators, manual_inputs=manual_inputs,
-        filings_context=filings_context, analyse=analyse, score=score_stage_v21,
+        filings_context=filings_context_stage, analyse=analyse, score=score_stage_v21,
         load_prior=load_prior, save=save,
     )
     return stages, store
