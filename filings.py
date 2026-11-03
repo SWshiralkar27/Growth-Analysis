@@ -1,6 +1,6 @@
 """
 filings.py
-Version: Step 5, v0.5.0 (2026-11-03). Code version 2026-11-step5.
+Version: Step 6, v0.6.0 (2026-11-03). Code version 2026-11-step6.
 Spec: README v3.1 DRAFT section 6 (filings); upload box approved 2026-11-03.
 
 Purpose: save, list and remove uploaded filing PDFs in the filings folder. One job,
@@ -55,6 +55,7 @@ class SaveResult:
     path: str
     status: str        # "saved" or "already_present"
     size_bytes: int
+    backup_note: str = ""   # filled in by the orchestrator after the permanent-storage copy
 
 
 @dataclass

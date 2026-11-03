@@ -1,6 +1,6 @@
 """
 pipeline.py
-Version: Step 5, v0.5.0 (2026-11-03). Code version 2026-11-step5.
+Version: Step 6, v0.6.0 (2026-11-03). Code version 2026-11-step6.
 Spec: README v3.1 DRAFT, sections 4, 5 and 10.
 
 Purpose: the orchestrator. Sequences the per-ticker stages, handles failures,
@@ -29,6 +29,7 @@ import glob
 import os
 import re
 import threading
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
@@ -37,6 +38,7 @@ from typing import Any, Callable, Iterable, Optional
 import config
 import filings
 import pdf_extractor
+import persistence
 import score_card
 from errors import PermanentError, TransientError
 from store import Store
@@ -132,6 +134,7 @@ class Stages:
     score: Callable[..., ScoreBreakdown]            # ticker, analysis, financials, indicators, manual, horizon
     load_prior: Callable[[str], Optional[dict]]     # ticker -> stored record or None
     save: Callable[[str, dict], None]               # ticker, record -> None
+    backup: Optional[Callable[[str], Any]] = None   # ticker -> persistence.OpResult or None
 
 
 # ------------------------------------------------------------ ticker input
@@ -239,6 +242,7 @@ def filings_context_stage(ticker: str) -> dict:
     Returns plain data: {"text", "meta", "documents", "unreadable"}. With no filings
     the text is empty and meta says so. Unreadable files are listed, never raised.
     """
+    ensure_local_filings(ticker)
     folder = config.FILINGS_FOLDER
     paths = glob.glob(os.path.join(folder, f"{glob.escape(ticker)}_*.pdf"))
     exact = os.path.join(folder, f"{ticker}.pdf")
@@ -262,20 +266,121 @@ def filings_context_stage(ticker: str) -> dict:
             "documents": [d["document"] for d in documents], "unreadable": unreadable}
 
 
+# ----------------------------------------------------- permanent storage
+_MIRROR: Any = None
+_MIRROR_READY = False
+_MIRROR_LOCK = threading.Lock()
+
+
+def get_mirror():
+    """The private-repository mirror, or None when permanent storage is not set up."""
+    global _MIRROR, _MIRROR_READY
+    with _MIRROR_LOCK:
+        if not _MIRROR_READY:
+            _MIRROR = persistence.make_mirror()
+            _MIRROR_READY = True
+        return _MIRROR
+
+
+def set_mirror(mirror: Any) -> None:
+    """Install a mirror (used by tests)."""
+    global _MIRROR, _MIRROR_READY
+    with _MIRROR_LOCK:
+        _MIRROR, _MIRROR_READY = mirror, True
+
+
+def reset_mirror() -> None:
+    global _MIRROR, _MIRROR_READY
+    with _MIRROR_LOCK:
+        _MIRROR, _MIRROR_READY = None, False
+
+
+def _rel_to_data(path) -> Optional[str]:
+    try:
+        return Path(path).resolve().relative_to(Path(config.DATA_DIR).resolve()).as_posix()
+    except (ValueError, OSError):
+        return None
+
+
+def push_local(path):
+    """Copy one local file to permanent storage. Returns an OpResult, or None when it is off."""
+    mirror = get_mirror()
+    if mirror is None:
+        return None
+    rel = _rel_to_data(path)
+    if rel is None:
+        return persistence.OpResult(False, "refused", "file is outside the data folder", str(path))
+    return mirror.push_file(rel)
+
+
+def backup_note(res) -> str:
+    if res is None:
+        return ""
+    return "backed up" if res.ok else f"not backed up: {res.message}"
+
+
+def ensure_local_filings(ticker: str) -> None:
+    """Fetch this ticker's backed-up filings that are missing locally. Never raises."""
+    mirror = get_mirror()
+    if mirror is None:
+        return
+    try:
+        mirror.pull_ticker_filings(ticker)
+    except Exception:
+        pass
+
+
+def restore_from_backup():
+    """Bring back saved analysis records after a restart. None when storage is off."""
+    mirror = get_mirror()
+    if mirror is None:
+        return None
+    try:
+        return mirror.pull_missing(("store/",))
+    except Exception as exc:
+        return persistence.PullResult(errors=[f"{type(exc).__name__}: {exc}"])
+
+
+def storage_status() -> dict:
+    mirror = get_mirror()
+    if mirror is None:
+        return {"enabled": False, "repo": None, "ok": 0, "failed": 0, "last_error": None}
+    return {"enabled": True, "repo": mirror.repo, **mirror.log.summary()}
+
+
+# ------------------------------------------------------------------ filings
 FILING_TYPE_LABELS = list(filings.FILING_TYPES)
 
 
 def upload_filing(ticker: str, doc_date, type_label: str, data: bytes):
-    """Save one uploaded filing (see filings.save_filing). Raises FilingError on refusal."""
-    return filings.save_filing(ticker, doc_date, type_label, data)
+    """Save one uploaded filing and copy it to permanent storage.
+
+    Raises FilingError on refusal. The result's backup_note says whether the copy worked.
+    """
+    result = filings.save_filing(ticker, doc_date, type_label, data)
+    result.backup_note = backup_note(push_local(result.path))
+    return result
 
 
 def stored_filings(ticker: str):
+    ensure_local_filings(ticker)
     return filings.list_filings(ticker)
 
 
 def delete_filing(ticker: str, name: str) -> bool:
-    return filings.remove_filing(ticker, name)
+    """Remove a filing locally and, when storage is on, from permanent storage (explicit user action)."""
+    existed = filings.remove_filing(ticker, name)
+    mirror = get_mirror()
+    if mirror is not None:
+        rel = _rel_to_data(Path(config.FILINGS_FOLDER) / name)
+        if rel is not None:
+            mirror.delete_file(rel)
+    return existed
+
+
+def backup_store_record(store, ticker: str):
+    """Backup stage for the real file store: copy the ticker's record."""
+    return push_local(store.path_for(ticker))
 
 
 def default_store() -> Store:
@@ -333,10 +438,14 @@ def make_stub_stages(store: Any = None) -> tuple[Stages, Any]:
     else:
         load_prior, save = store.load, store.save  # real store: not marked as stubs
 
+    backup = None
+    if not use_memory_store and hasattr(store, "path_for"):
+        backup = lambda ticker: backup_store_record(store, ticker)  # noqa: E731
+
     stages = Stages(
         fetch=fetch, indicators=indicators, manual_inputs=manual_inputs,
         filings_context=filings_context_stage, analyse=analyse, score=score_stage_v21,
-        load_prior=load_prior, save=save,
+        load_prior=load_prior, save=save, backup=backup,
     )
     return stages, store
 
@@ -467,6 +576,17 @@ def process_ticker(ticker: str, horizon_days: int, stages: Stages,
         if err:
             status = _downgrade(status, config.STATUS_PARTIAL)
             breakdown.labels.append("PARTIAL: result could not be saved")
+        elif stages.backup is not None:
+            # Copy to permanent storage. A failed backup never changes the status.
+            notify("backup", "start")
+            try:
+                res = stages.backup(ticker)
+            except Exception as exc:
+                res = persistence.OpResult(False, "failed", f"{type(exc).__name__}: {exc}")
+            if res is not None:
+                notify("backup", "done" if res.ok else "error")
+                if not res.ok:
+                    breakdown.labels.append(f"NOT BACKED UP: {res.message}")
 
     return TickerResult(ticker=ticker, status=status, stage_errors=errors,
                         breakdown=breakdown, stubbed_stages=stubbed,

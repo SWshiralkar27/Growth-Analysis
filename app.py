@@ -1,6 +1,6 @@
 """
 app.py
-Version: Step 5, v0.5.0 (2026-11-03). Code version 2026-11-step5.
+Version: Step 6, v0.6.0 (2026-11-03). Code version 2026-11-step6.
 Spec: README v3.1 DRAFT, sections 5.3 and 13 (Streamlit replaces the desktop
 GUI; this is a spec change awaiting recording in v3.2).
 
@@ -24,6 +24,28 @@ import pipeline
 from errors import ConfigError, FilingError
 
 st.set_page_config(page_title="Equity Growth Analyst", layout="wide")
+
+
+@st.cache_resource(show_spinner=False)
+def restore_once():
+    """Bring back saved records from permanent storage once per app start."""
+    return pipeline.restore_from_backup()
+
+
+def render_storage_status() -> None:
+    info = pipeline.storage_status()
+    if not info["enabled"]:
+        st.caption("Permanent storage: OFF (temporary)")
+        return
+    st.caption(f"Permanent storage: ON ({info['repo']})")
+    restored = restore_once()
+    if restored is not None and restored.restored:
+        st.caption(f"Restored {len(restored.restored)} saved record(s) after restart")
+    if restored is not None and restored.errors:
+        st.caption(f"Restore problem: {restored.errors[0]}")
+    st.caption(f"Backups this session: {info['ok']} ok, {info['failed']} failed")
+    if info["last_error"]:
+        st.caption(f"Last backup problem: {info['last_error']}")
 
 
 def start_worker(tickers: list[str], horizon_days: int, q: "queue.Queue") -> threading.Thread:
@@ -106,10 +128,13 @@ def _clear_uploader() -> None:
 
 def render_filings_panel() -> None:
     st.subheader("Filings")
-    st.warning(
-        "Uploaded files are temporary for now: they disappear when the app "
-        "restarts or redeploys. Permanent storage comes in the next step."
-    )
+    if pipeline.storage_status()["enabled"]:
+        st.info("Uploaded files are copied to your private data repository.")
+    else:
+        st.warning(
+            "Permanent storage is OFF: uploaded files disappear when the app "
+            "restarts or redeploys."
+        )
     raw = st.text_input("Ticker", key="filing_ticker", placeholder="for example TCS")
     tickers, rejected = pipeline.normalise_tickers(raw, 1) if raw.strip() else ([], [])
     ticker = tickers[0] if tickers else None
@@ -132,10 +157,12 @@ def render_filings_panel() -> None:
         else:
             try:
                 result = pipeline.upload_filing(ticker, doc_date, type_label, upload.getvalue())
-                if result.status == "already_present":
-                    st.session_state["filing_msg"] = ("info", f"{result.name} was already uploaded.")
-                else:
-                    st.session_state["filing_msg"] = ("success", f"Saved {result.name}.")
+                base = (f"{result.name} was already uploaded." if result.status == "already_present"
+                        else f"Saved {result.name}.")
+                note = f" {result.backup_note.capitalize()}." if result.backup_note else ""
+                kind = "warning" if result.backup_note.startswith("not backed up") else (
+                    "info" if result.status == "already_present" else "success")
+                st.session_state["filing_msg"] = (kind, base + note)
                 _clear_uploader()
             except FilingError as exc:
                 st.session_state["filing_msg"] = ("error", str(exc))
@@ -200,8 +227,8 @@ def render_run_panel(horizon: int) -> None:
 def main() -> None:
     st.title("Equity Growth Analyst")
     st.warning(
-        "Skeleton: the store, the scorer, the filings reader and the upload box "
-        "are real. Data fetching and the AI analysis are still stubs, so every "
+        "Skeleton: the store, the scorer, the filings reader, the upload box "
+        "and the permanent-storage copy are real. Data fetching and the AI analysis are still stubs, so every "
         "signal is scored at the 35% prior and each demo ticker shows the same "
         "total. Uploaded filings are counted in the Filings column."
     )
@@ -222,6 +249,7 @@ def main() -> None:
             config.DEFAULT_HORIZON_DAYS,
         )
         st.caption(f"Gemini key present: {'yes' if config.has_secret('gemini_api_key') else 'no'}")
+        render_storage_status()
         try:
             st.caption(f"Stored analyses: {len(pipeline.default_store().list_tickers())}")
         except Exception:

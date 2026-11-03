@@ -1,6 +1,6 @@
 """
 config.py
-Version: Step 5, v0.5.0 (2026-11-03). Code version 2026-11-step5.
+Version: Step 6, v0.6.0 (2026-11-03). Code version 2026-11-step6.
 Spec: README v3.1 DRAFT (v2.0 is binding where it differs).
 
 Purpose: constants, paths, versions, secret lookup, start-up checks.
@@ -22,7 +22,7 @@ from pathlib import Path
 from errors import ConfigError
 
 # ---------------------------------------------------------------- versions
-CODE_VERSION = "2026-11-step5"
+CODE_VERSION = "2026-11-step6"
 SPEC_VERSION = "v3.1-draft"
 PROMPT_VERSION = "UNSET"  # set at step 5 (gemini_analyser); v2.0 value [FILL FROM v2.0]
 SCHEMA_VERSION = 1
@@ -76,6 +76,10 @@ PAGES_PER_SECTION = 6
 CONTEXT_GOVERNANCE_SHARE = 0.30     # share of the budget reserved for governance pages
 CONTEXT_BUSINESS_SHARE = 0.45       # share reserved for growth pages (plus unused governance share)
 
+# What gets mirrored to the private data repository (paths relative to DATA_DIR).
+PERSIST_PREFIXES = ("store/", "filings/")
+PERSIST_TREE_CACHE_SECONDS = 30
+
 # Largest filing the upload box accepts (approved 2026-11-03).
 MAX_UPLOAD_MB = 50
 
@@ -104,7 +108,14 @@ UNVERIFIED_GOVERNANCE_CAP = 69
 
 # ---------------------------------------------------------------- secrets
 # Logical name -> environment variable name. [FILL FROM v2.0]
-SECRET_ENV_NAMES = {"gemini_api_key": "GEMINI_API_KEY"}
+SECRET_ENV_NAMES = {
+    "gemini_api_key": "GEMINI_API_KEY",
+    # Permanent storage in a private GitHub repository (step 6). All three are optional;
+    # without the repo and the token the app simply stays temporary.
+    "github_data_repo": "GITHUB_DATA_REPO",      # for example  yourname/Growth-Analysis-Data
+    "github_data_token": "GITHUB_DATA_TOKEN",    # fine-grained token, Contents read and write, that repo only
+    "github_data_branch": "GITHUB_DATA_BRANCH",  # default main
+}
 
 
 def get_secret(key: str) -> str | None:
