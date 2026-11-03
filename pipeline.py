@@ -1,6 +1,6 @@
 """
 pipeline.py
-Version: Step 4, v0.4.0 (2026-11-02). Code version 2026-11-step4.
+Version: Step 5, v0.5.0 (2026-11-03). Code version 2026-11-step5.
 Spec: README v3.1 DRAFT, sections 4, 5 and 10.
 
 Purpose: the orchestrator. Sequences the per-ticker stages, handles failures,
@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Optional
 
 import config
+import filings
 import pdf_extractor
 import score_card
 from errors import PermanentError, TransientError
@@ -81,6 +82,7 @@ class TickerResult:
     breakdown: Optional[ScoreBreakdown] = None
     stubbed_stages: list = field(default_factory=list)
     prior_used: bool = False
+    documents: list = field(default_factory=list)   # filings read for this ticker
     rank: Optional[int] = None
     schema_version: int = config.SCHEMA_VERSION
 
@@ -110,6 +112,7 @@ class RunResult:
                 "Total": b.total if b else None,
                 "Rating": (score_card.rating_for_score(b.total)
                            if b and b.total is not None else None),
+                "Filings": len(r.documents),
                 "Long-term": b.long_term if b else None,
                 "Short-term": b.short_term if b else None,
                 "Coverage %": b.coverage_pct if b else None,
@@ -259,6 +262,22 @@ def filings_context_stage(ticker: str) -> dict:
             "documents": [d["document"] for d in documents], "unreadable": unreadable}
 
 
+FILING_TYPE_LABELS = list(filings.FILING_TYPES)
+
+
+def upload_filing(ticker: str, doc_date, type_label: str, data: bytes):
+    """Save one uploaded filing (see filings.save_filing). Raises FilingError on refusal."""
+    return filings.save_filing(ticker, doc_date, type_label, data)
+
+
+def stored_filings(ticker: str):
+    return filings.list_filings(ticker)
+
+
+def delete_filing(ticker: str, name: str) -> bool:
+    return filings.remove_filing(ticker, name)
+
+
 def default_store() -> Store:
     """The real file-backed store (step 2)."""
     return Store(config.STORE_DIR)
@@ -333,6 +352,7 @@ def process_ticker(ticker: str, horizon_days: int, stages: Stages,
     stubbed: list[str] = []
     status = config.STATUS_OK
     prior_used = False
+    documents_read: list = []
 
     def notify(stage: str, state: str) -> None:
         if on_progress is None:
@@ -367,7 +387,8 @@ def process_ticker(ticker: str, horizon_days: int, stages: Stages,
     def failed() -> TickerResult:
         return TickerResult(ticker=ticker, status=config.STATUS_FAILED,
                             stage_errors=errors, breakdown=None,
-                            stubbed_stages=stubbed, prior_used=prior_used)
+                            stubbed_stages=stubbed, prior_used=prior_used,
+                            documents=documents_read)
 
     # 1. fetch: without data nothing else can run
     fetched, err = run("fetch", stages.fetch, ticker)
@@ -392,6 +413,8 @@ def process_ticker(ticker: str, horizon_days: int, stages: Stages,
 
     # 4. filings context
     context, ctx_err = run("filings_context", stages.filings_context, ticker)
+    if isinstance(context, dict):
+        documents_read = list(context.get("documents", []))
 
     # 5. analysis (needs context); fall back to the stored prior if it cannot run
     analysis: Optional[dict] = None
@@ -447,7 +470,7 @@ def process_ticker(ticker: str, horizon_days: int, stages: Stages,
 
     return TickerResult(ticker=ticker, status=status, stage_errors=errors,
                         breakdown=breakdown, stubbed_stages=stubbed,
-                        prior_used=prior_used)
+                        prior_used=prior_used, documents=documents_read)
 
 
 # ----------------------------------------------------------------- ranking

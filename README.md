@@ -1,8 +1,8 @@
 # Equity Growth Analyst
 
-Version: Step 4, v0.4.0 (2026-11-02). Code version 2026-11-step4. Spec: README v3.1 DRAFT.
+Version: Step 5, v0.5.0 (2026-11-03). Code version 2026-11-step5. Spec: README v3.1 DRAFT.
 
-Python research engine for Indian listed equities. **Steps 1 to 4 are a skeleton with a real store, scorer and filings reader**: config, an orchestrator, an atomic file store, the recovered v2.1 scorer, the filings reader, and a Streamlit front end. Data fetching and the AI analysis are still stubs, so every signal is scored at the prior.
+Python research engine for Indian listed equities. **Steps 1 to 5 are a skeleton with a real store, scorer, filings reader and upload box**: config, an orchestrator, an atomic file store, the recovered v2.1 scorer, the filings reader, a filing upload panel, and a Streamlit front end. Data fetching and the AI analysis are still stubs, so every signal is scored at the prior.
 
 ## Run locally
 
@@ -23,6 +23,10 @@ Python research engine for Indian listed equities. **Steps 1 to 4 are a skeleton
 4. Open "Advanced settings" and paste your secrets (see `.streamlit/secrets.toml.example`). Never commit a real key.
 5. Deploy.
 
+## Uploading filings
+
+Open the **Filings** tab, enter a ticker, choose the document type and date, pick a PDF (up to 50 MB) and tap **Save file**. Files are stored as `TICKER_YYYY_MM_DD_Type.pdf`. Nothing is ever overwritten; to replace a file, remove it first. Uploaded files are temporary on Streamlit Community Cloud until persistent storage is added.
+
 ## Important limits
 
 - **Storage is temporary on Streamlit Community Cloud.** Files written to `data/` can vanish on restart or redeploy. Until a persistent backend is added behind `store.py`, treat the cloud app as a demo and run locally for real work.
@@ -39,10 +43,12 @@ Python research engine for Indian listed equities. **Steps 1 to 4 are a skeleton
     store.py          atomic per-ticker records (data/store/)
     score_card.py     the recovered v2.1 quality and governance scorer (unchanged logic)
     pdf_extractor.py  reads filing PDFs and builds the AI context (unchanged logic)
+    filings.py        saves, lists and removes uploaded filing PDFs (atomic, never overwrites)
     test_step1.py     tests for config, tickers, pipeline
     test_store.py     tests for the store and the 429 rule
     test_score_card.py  tests for the scorer (ported from the old test_patches.py)
     test_pdf_extractor.py  tests for the filings reader and context builder
+    test_filings.py   tests for the upload engine
 
 ## Demo tickers (stub stages)
 

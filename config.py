@@ -1,6 +1,6 @@
 """
 config.py
-Version: Step 4, v0.4.0 (2026-11-02). Code version 2026-11-step4.
+Version: Step 5, v0.5.0 (2026-11-03). Code version 2026-11-step5.
 Spec: README v3.1 DRAFT (v2.0 is binding where it differs).
 
 Purpose: constants, paths, versions, secret lookup, start-up checks.
@@ -22,7 +22,7 @@ from pathlib import Path
 from errors import ConfigError
 
 # ---------------------------------------------------------------- versions
-CODE_VERSION = "2026-11-step4"
+CODE_VERSION = "2026-11-step5"
 SPEC_VERSION = "v3.1-draft"
 PROMPT_VERSION = "UNSET"  # set at step 5 (gemini_analyser); v2.0 value [FILL FROM v2.0]
 SCHEMA_VERSION = 1
@@ -76,6 +76,9 @@ PAGES_PER_SECTION = 6
 CONTEXT_GOVERNANCE_SHARE = 0.30     # share of the budget reserved for governance pages
 CONTEXT_BUSINESS_SHARE = 0.45       # share reserved for growth pages (plus unused governance share)
 
+# Largest filing the upload box accepts (approved 2026-11-03).
+MAX_UPLOAD_MB = 50
+
 # ---------------------------------------------------------------- statuses
 STATUS_OK = "ok"
 STATUS_STALE = "stale"
@@ -94,9 +97,10 @@ COMPONENT_WEIGHTS: dict[str, tuple[str, float]] = {}
 
 # v2.1 scorer settings (score_card.py reads these; see its _DEFAULTS).
 SCORE_PARAMS: dict = {}  # empty = use the recovered v2.1 defaults unchanged
-# Cap applied when governance was never actually checked. The real value lived in
-# the lost config.py. [FILL FROM old config.py] None means this cap is OFF.
-UNVERIFIED_GOVERNANCE_CAP = None
+# Cap applied when governance was never actually checked. Value 69 is stated in the
+# README v2.0 text in the project files (section 3.3) and was approved by the owner on
+# 2026-11-03. It sits just under the 70 needed for "Good Candidate". None would switch it off.
+UNVERIFIED_GOVERNANCE_CAP = 69
 
 # ---------------------------------------------------------------- secrets
 # Logical name -> environment variable name. [FILL FROM v2.0]

@@ -1,6 +1,6 @@
 """
 errors.py
-Version: Step 2, v0.2.0 (2026-11-02). Code version 2026-11-step2.
+Version: Step 5, v0.5.0 (2026-11-03). Code version 2026-11-step5.
 Spec: README v3.1 DRAFT, sections 5.2 and 9.
 
 Purpose: typed errors shared by all modules. Plain exceptions, no logic.
@@ -33,3 +33,7 @@ class StoreError(PermanentError):
 
     The prior record on disk is never changed when this is raised.
     """
+
+
+class FilingError(EngineError):
+    """A filing upload or removal was refused; nothing on disk was changed."""

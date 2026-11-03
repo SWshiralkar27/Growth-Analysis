@@ -1,6 +1,6 @@
 """
 app.py
-Version: Step 3, v0.3.0 (2026-11-02). Code version 2026-11-step3.
+Version: Step 5, v0.5.0 (2026-11-03). Code version 2026-11-step5.
 Spec: README v3.1 DRAFT, sections 5.3 and 13 (Streamlit replaces the desktop
 GUI; this is a spec change awaiting recording in v3.2).
 
@@ -14,13 +14,14 @@ from __future__ import annotations
 
 import queue
 import threading
+from datetime import date
 
 import pandas as pd
 import streamlit as st
 
 import config
 import pipeline
-from errors import ConfigError
+from errors import ConfigError, FilingError
 
 st.set_page_config(page_title="Equity Growth Analyst", layout="wide")
 
@@ -99,37 +100,74 @@ def render_result(result: pipeline.RunResult) -> None:
     )
 
 
-def main() -> None:
-    st.title("Equity Growth Analyst")
+def _clear_uploader() -> None:
+    st.session_state["uploader_gen"] = st.session_state.get("uploader_gen", 0) + 1
+
+
+def render_filings_panel() -> None:
+    st.subheader("Filings")
     st.warning(
-        "Skeleton: only the store and the scorer are real. Data, filings and "
-        "AI analysis are still stubs, so every signal is scored at the 35% "
-        "prior and each demo ticker shows the same total. The table proves "
-        "the flow, the failure rules, the ranking and the saved records."
+        "Uploaded files are temporary for now: they disappear when the app "
+        "restarts or redeploys. Permanent storage comes in the next step."
+    )
+    raw = st.text_input("Ticker", key="filing_ticker", placeholder="for example TCS")
+    tickers, rejected = pipeline.normalise_tickers(raw, 1) if raw.strip() else ([], [])
+    ticker = tickers[0] if tickers else None
+    if rejected and raw.strip():
+        st.error(f"{rejected[0][0]}: {rejected[0][1]}")
+
+    col_type, col_date = st.columns(2)
+    type_label = col_type.selectbox("Document type", pipeline.FILING_TYPE_LABELS)
+    doc_date = col_date.date_input("Document date", value=date.today(), max_value=date.today())
+    upload = st.file_uploader(
+        f"PDF file (up to {config.MAX_UPLOAD_MB} MB)", type=["pdf"],
+        key=f"uploader_{st.session_state.get('uploader_gen', 0)}",
     )
 
-    try:
-        notices = config.validate_config()
-    except ConfigError as exc:
-        st.error(f"Configuration error: {exc}")
-        st.stop()
-    for note in notices:
-        st.info(note)
+    if st.button("Save file", type="primary"):
+        if not ticker:
+            st.session_state["filing_msg"] = ("error", "Enter a valid ticker first.")
+        elif upload is None:
+            st.session_state["filing_msg"] = ("error", "Choose a PDF file first.")
+        else:
+            try:
+                result = pipeline.upload_filing(ticker, doc_date, type_label, upload.getvalue())
+                if result.status == "already_present":
+                    st.session_state["filing_msg"] = ("info", f"{result.name} was already uploaded.")
+                else:
+                    st.session_state["filing_msg"] = ("success", f"Saved {result.name}.")
+                _clear_uploader()
+            except FilingError as exc:
+                st.session_state["filing_msg"] = ("error", str(exc))
+        st.rerun()
 
-    with st.sidebar:
-        st.header("Run settings")
-        horizon = st.slider(
-            "Holding horizon (days)",
-            config.HORIZON_MIN_DAYS, config.HORIZON_MAX_DAYS,
-            config.DEFAULT_HORIZON_DAYS,
-        )
-        st.caption(f"Gemini key present: {'yes' if config.has_secret('gemini_api_key') else 'no'}")
+    msg = st.session_state.pop("filing_msg", None)
+    if msg:
+        getattr(st, msg[0])(msg[1])
+
+    if ticker:
+        st.markdown(f"**Stored filings for {ticker}**")
         try:
-            st.caption(f"Stored analyses: {len(pipeline.default_store().list_tickers())}")
-        except Exception:
-            st.caption("Stored analyses: unavailable")
-        st.caption(f"Code {config.CODE_VERSION} | spec {config.SPEC_VERSION}")
+            files = pipeline.stored_filings(ticker)
+        except FilingError as exc:
+            files = []
+            st.error(str(exc))
+        if not files:
+            st.caption("None yet.")
+        for f in files:
+            c_name, c_info, c_btn = st.columns([5, 3, 2])
+            c_name.text(f.name)
+            when = f.doc_date.isoformat() if f.doc_date else "date unknown"
+            c_info.caption(f"{f.type_label} | {when} | {f.size_bytes / 1_048_576:.1f} MB")
+            if c_btn.button("Remove", key=f"rm_{f.name}"):
+                try:
+                    pipeline.delete_filing(ticker, f.name)
+                except FilingError as exc:
+                    st.session_state["filing_msg"] = ("error", str(exc))
+                st.rerun()
 
+
+def render_run_panel(horizon: int) -> None:
     raw = st.text_area(
         f"Tickers (1 to {config.GUI_MAX_TICKERS}, separated by commas or new lines)",
         value="FAKE", height=100,
@@ -157,6 +195,44 @@ def main() -> None:
 
     if "last_result" in st.session_state:
         render_result(st.session_state["last_result"])
+
+
+def main() -> None:
+    st.title("Equity Growth Analyst")
+    st.warning(
+        "Skeleton: the store, the scorer, the filings reader and the upload box "
+        "are real. Data fetching and the AI analysis are still stubs, so every "
+        "signal is scored at the 35% prior and each demo ticker shows the same "
+        "total. Uploaded filings are counted in the Filings column."
+    )
+
+    try:
+        notices = config.validate_config()
+    except ConfigError as exc:
+        st.error(f"Configuration error: {exc}")
+        st.stop()
+    for note in notices:
+        st.info(note)
+
+    with st.sidebar:
+        st.header("Run settings")
+        horizon = st.slider(
+            "Holding horizon (days)",
+            config.HORIZON_MIN_DAYS, config.HORIZON_MAX_DAYS,
+            config.DEFAULT_HORIZON_DAYS,
+        )
+        st.caption(f"Gemini key present: {'yes' if config.has_secret('gemini_api_key') else 'no'}")
+        try:
+            st.caption(f"Stored analyses: {len(pipeline.default_store().list_tickers())}")
+        except Exception:
+            st.caption("Stored analyses: unavailable")
+        st.caption(f"Code {config.CODE_VERSION} | spec {config.SPEC_VERSION}")
+
+    tab_run, tab_files = st.tabs(["Run analysis", "Filings"])
+    with tab_run:
+        render_run_panel(horizon)
+    with tab_files:
+        render_filings_panel()
 
 
 main()

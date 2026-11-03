@@ -1,6 +1,6 @@
 """
 test_score_card.py
-Version: Step 3, v0.3.0 (2026-11-02).
+Version: Step 5, v0.5.0 (2026-11-03).
 Ported from the score_card section of the old test_patches.py (v2.1 checks),
 plus tests for the pipeline's score stage.
 Run from the project root:  python -m unittest discover -s . -p "test_*.py" -v
@@ -207,11 +207,17 @@ class GovernanceTests(unittest.TestCase):
 
 
 class CapTests(unittest.TestCase):
-    def test_unverified_cap_is_off_by_default_until_its_value_is_recovered(self):
-        self.assertIsNone(config.UNVERIFIED_GOVERNANCE_CAP)
+    def test_unverified_cap_is_69_from_the_spec_and_applies_by_default(self):
+        self.assertEqual(config.UNVERIFIED_GOVERNANCE_CAP, 69)
         r = sc.compute_score(fin(governance_sources=[], **STRONG), llm(score=100, coverage=None))
+        self.assertLessEqual(r["score"], 69)
+        self.assertIn("Governance unchecked", notes(r))
+        self.assertLess(r["score"], 70)   # stays below "Good Candidate"
+
+    def test_unverified_cap_can_be_switched_off(self):
+        with mock.patch.object(config, "UNVERIFIED_GOVERNANCE_CAP", None):
+            r = sc.compute_score(fin(governance_sources=[], **STRONG), llm(score=100, coverage=None))
         self.assertGreater(r["score"], 69)
-        self.assertNotIn("Governance unchecked", notes(r))
 
     def test_cap_applies_when_governance_never_checked(self):
         with mock.patch.object(config, "UNVERIFIED_GOVERNANCE_CAP", 69):
@@ -255,7 +261,10 @@ class PipelineScoreStageTests(unittest.TestCase):
         text = " | ".join(b.labels)
         self.assertIn("No LLM analysis", text)
         self.assertIn("STUB data", text)
-        self.assertIn("Unverified-governance cap is OFF", text)
+        self.assertNotIn("cap is OFF", text)       # the cap is on at 69
+        with mock.patch.object(config, "UNVERIFIED_GOVERNANCE_CAP", None):
+            off = pipeline.score_stage_v21("T", None, {"stub": True}, {}, {}, 30)
+        self.assertIn("Unverified-governance cap is OFF", " | ".join(off.labels))
 
     def test_cap_text_is_copied_into_caps_applied(self):
         out = {**llm(score=100), "documents_used": [], "pages_included": 0}
