@@ -1,6 +1,6 @@
 """
 app.py
-Version: Step 6, v0.6.0 (2026-11-03). Code version 2026-11-step6.
+Version: Step 7, v0.7.0 (2026-11-04). Code version 2026-11-step7.
 Spec: README v3.1 DRAFT, sections 5.3 and 13 (Streamlit replaces the desktop
 GUI; this is a spec change awaiting recording in v3.2).
 
@@ -199,6 +199,8 @@ def render_run_panel(horizon: int) -> None:
         f"Tickers (1 to {config.GUI_MAX_TICKERS}, separated by commas or new lines)",
         value="FAKE", height=100,
     )
+    if not config.has_secret("gemini_api_key"):
+        st.caption("No Gemini key is set, so any ticker other than the four demo tickers will show as failed.")
     with st.expander("Demo tickers for the stub stages"):
         st.markdown(
             "- `FAKE`: normal run, status ok\n"
@@ -227,10 +229,11 @@ def render_run_panel(horizon: int) -> None:
 def main() -> None:
     st.title("Equity Growth Analyst")
     st.warning(
-        "Skeleton: the store, the scorer, the filings reader, the upload box "
-        "and the permanent-storage copy are real. Data fetching and the AI analysis are still stubs, so every "
-        "signal is scored at the 35% prior and each demo ticker shows the same "
-        "total. Uploaded filings are counted in the Filings column."
+        "Skeleton: the store, the scorer, the filings reader, the upload box, "
+        "the permanent-storage copy and the AI analysis are real. Data fetching "
+        "is still a stub, so every financial signal is scored at the 35% prior. "
+        "The four demo tickers use a fake analysis and all show the same total. "
+        "Any other ticker reads your uploaded filings and calls Gemini."
     )
 
     try:

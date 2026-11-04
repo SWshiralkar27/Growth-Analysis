@@ -104,7 +104,8 @@ class PipelineTests(unittest.TestCase):
                                            total=total, coverage_pct=cov, horizon_days=horizon)
 
         stages = dataclasses.replace(stages, score=score)
-        run = pipeline.run_pipeline(["A", "B", "C"], 30, stages)
+        with mock.patch.object(pipeline, "DEMO_TICKERS", frozenset({"A", "B", "C"})):
+            run = pipeline.run_pipeline(["A", "B", "C"], 30, stages)
         self.assertEqual([r.ticker for r in run.results], ["C", "B", "A"])
         self.assertEqual([r.rank for r in run.results], [1, 2, 3])
 

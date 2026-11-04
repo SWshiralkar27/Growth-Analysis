@@ -1,6 +1,6 @@
 """
 test_pdf_extractor.py
-Version: Step 4, v0.4.0 (2026-11-02).
+Version: Step 7, v0.7.0 (2026-11-04).
 Tests for pdf_extractor.py (ported from the old test_patches.py where they existed,
 plus new tests that read small generated PDFs) and for the pipeline's filings stage.
 Needs the pypdf package. Run:  python -m unittest discover -s . -p "test_*.py" -v
@@ -229,7 +229,8 @@ class FilingsStageTests(TmpCase):
 
     def test_a_full_run_still_works_with_and_without_filings(self):
         make_pdf(self.dir / "FAKE_2026_05_12_AnnualReport.pdf", ["Order book backlog"])
-        run = pipeline.run_pipeline(["FAKE", "OTHER"], 30)
+        with mock.patch.object(pipeline, "DEMO_TICKERS", frozenset({"FAKE", "OTHER"})):
+            run = pipeline.run_pipeline(["FAKE", "OTHER"], 30)
         self.assertEqual([r.status for r in run.results], ["ok", "ok"])
         self.assertNotIn("filings_context", run.results[0].stubbed_stages)
 

@@ -1,6 +1,6 @@
 """
 config.py
-Version: Step 6, v0.6.0 (2026-11-03). Code version 2026-11-step6.
+Version: Step 7, v0.7.0 (2026-11-04). Code version 2026-11-step7.
 Spec: README v3.1 DRAFT (v2.0 is binding where it differs).
 
 Purpose: constants, paths, versions, secret lookup, start-up checks.
@@ -22,9 +22,9 @@ from pathlib import Path
 from errors import ConfigError
 
 # ---------------------------------------------------------------- versions
-CODE_VERSION = "2026-11-step6"
+CODE_VERSION = "2026-11-step7"
 SPEC_VERSION = "v3.1-draft"
-PROMPT_VERSION = "UNSET"  # set at step 5 (gemini_analyser); v2.0 value [FILL FROM v2.0]
+PROMPT_VERSION = "2026-11-v3"  # bump whenever the prompt, JSON schema or scoring changes (v2.0 used 2026-10-v2)
 SCHEMA_VERSION = 1
 
 # ------------------------------------------------------------------- paths
@@ -65,6 +65,21 @@ DEFAULT_HORIZON_DAYS = 30     # UI starting value only; not a scoring input
 GUI_MAX_TICKERS = 10          # SPEC: GUI takes 1 to 10 tickers
 DEFAULT_WORKERS = 1           # worker threads; v2.0 value [FILL FROM v2.0]
 TICKER_PATTERN = re.compile(r"^[A-Z0-9&.\-]{1,20}$")
+
+# ----------------------------------------------------------------- Gemini
+# Values from the README v2.0 configuration reference unless marked otherwise.
+GEMINI_MODEL = (os.environ.get("GEMINI_MODEL", "") or "").strip() or "gemini-3.5-flash"
+# ^ v2.0 listed "gemini-3.8-flash" ("or current model"); that name could not be verified,
+#   so the default is the documented stable Flash model. Override with the GEMINI_MODEL secret.
+GEMINI_THINKING_LEVEL = (os.environ.get("GEMINI_THINKING_LEVEL", "") or "low").strip().lower()
+GEMINI_MAX_ATTEMPTS = 5
+GEMINI_INITIAL_DELAY = 2.0      # seconds, first backoff (recovered from the old reconstruction)
+GEMINI_MAX_DELAY = 30.0         # seconds, backoff ceiling (recovered from the old reconstruction)
+GEMINI_MAX_WAIT_SECONDS = 90.0  # NEW safety limit: if Google asks for a longer wait, stop retrying
+RATE_LIMIT_PER_MINUTE = 5
+ALLOW_NO_FILING_ANALYSIS = True  # analyse even with no filings (the scorer then caps the score at 54)
+LLM_CACHE_ENABLED = True         # reuse an identical analysis within the same inputs
+HORIZON = "the next 2 quarters (about 6 months)"   # wording used inside the prompt
 
 # ------------------------------------------------- filings and context builder
 # Values from the README v2.0 configuration reference (recovered from the project files).

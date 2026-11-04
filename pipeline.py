@@ -1,14 +1,14 @@
 """
 pipeline.py
-Version: Step 6, v0.6.0 (2026-11-03). Code version 2026-11-step6.
+Version: Step 7, v0.7.0 (2026-11-04). Code version 2026-11-step7.
 Spec: README v3.1 DRAFT, sections 4, 5 and 10.
 
 Purpose: the orchestrator. Sequences the per-ticker stages, handles failures,
 ranks the results and returns plain data. It contains no scoring maths, no
 data fetching and no UI code.
 
-Status: every stage is a STUB except the store (step 2), the scorer (step 3) and the
-filings reader (step 4). Real modules replace
+Status: every stage is a STUB except the store (step 2), the scorer (step 3), the
+filings reader (step 4) and the AI analysis for non-demo tickers (step 7). Real modules replace
 the stubs one step at a time by passing a different `Stages` object; nothing
 else changes.
 
@@ -29,6 +29,7 @@ import glob
 import os
 import re
 import threading
+import time
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
@@ -37,10 +38,12 @@ from typing import Any, Callable, Iterable, Optional
 
 import config
 import filings
+import gemini_analyser
 import pdf_extractor
 import persistence
 import score_card
 from errors import PermanentError, TransientError
+from rate_limiter import RateLimiter
 from store import Store
 
 ProgressCallback = Callable[[str, str, str], None]
@@ -194,6 +197,22 @@ class StubStore:
 # Demo hooks so the failure rules can be seen working. Remove at step 5.
 SIM_TRANSIENT = {"STALE429", "NOPRIOR429"}
 SIM_PERMANENT = {"FAILPERM"}
+# These four tickers always use the stub analysis so the demo table never calls Gemini.
+DEMO_TICKERS = frozenset({"FAKE", "STALE429", "NOPRIOR429", "FAILPERM"})
+
+# One limiter shared by every analysis in this process (RATE_LIMIT_PER_MINUTE calls a minute).
+_LIMITER = RateLimiter(config.RATE_LIMIT_PER_MINUTE)
+
+
+def make_real_analyse(generate_fn=None, limiter=None, sleep=time.sleep, cache_dir=None):
+    """The analyse stage backed by gemini_analyser. generate_fn is for tests; the default
+    builds the real Gemini call from the GEMINI_API_KEY secret."""
+    def analyse(ticker: str, context: dict, financials: dict) -> dict:
+        ctx = context if isinstance(context, dict) else {}
+        return gemini_analyser.analyse_company(
+            ticker, financials, ctx.get("text", ""), ctx.get("meta", {}),
+            generate_fn=generate_fn, limiter=limiter or _LIMITER, sleep=sleep, cache_dir=cache_dir)
+    return analyse
 
 
 def score_stage_v21(ticker, analysis, financials, indicators, manual,
@@ -397,9 +416,10 @@ def seed_demo_prior(store: Any) -> None:
         pass  # demo scaffolding only; it must never break a run
 
 
-def make_stub_stages(store: Any = None) -> tuple[Stages, Any]:
+def make_stub_stages(store: Any = None, analyse_fn: Any = None) -> tuple[Stages, Any]:
     """Stub stages. With store=None an in-memory StubStore is used (tests).
-    Pass default_store() to use the real file-backed store."""
+    Pass default_store() to use the real file-backed store. The four demo tickers use the
+    stub analysis; every other ticker uses analyse_fn, or the real Gemini analysis by default."""
     use_memory_store = store is None
     if use_memory_store:
         store = StubStore()
@@ -419,13 +439,19 @@ def make_stub_stages(store: Any = None) -> tuple[Stages, Any]:
     def manual_inputs(ticker: str) -> dict:
         return {}
 
-    @_stub
-    def analyse(ticker: str, context: dict, financials: dict) -> dict:
+    def stub_analyse(ticker: str, context: dict, financials: dict) -> dict:
         if ticker in SIM_TRANSIENT:
             raise TransientError("simulated 429 from the analyser")
         if ticker in SIM_PERMANENT:
             raise PermanentError("simulated permanent analyser failure")
         return {"stub": True, "note": "no real analysis yet"}
+
+    real_analyse = analyse_fn or make_real_analyse()
+
+    def analyse(ticker: str, context: dict, financials: dict) -> dict:
+        if ticker in DEMO_TICKERS:
+            return stub_analyse(ticker, context, financials)
+        return real_analyse(ticker, context, financials)
 
     if use_memory_store:
         @_stub
