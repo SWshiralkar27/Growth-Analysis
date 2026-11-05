@@ -1,6 +1,6 @@
 """
 config.py
-Version: Step 7, v0.7.0 (2026-11-04). Code version 2026-11-step7.
+Version: Step 8, v0.8.0 (2026-11-04). Code version 2026-11-step8.
 Spec: README v3.1 DRAFT (v2.0 is binding where it differs).
 
 Purpose: constants, paths, versions, secret lookup, start-up checks.
@@ -22,7 +22,7 @@ from pathlib import Path
 from errors import ConfigError
 
 # ---------------------------------------------------------------- versions
-CODE_VERSION = "2026-11-step7"
+CODE_VERSION = "2026-11-step8"
 SPEC_VERSION = "v3.1-draft"
 PROMPT_VERSION = "2026-11-v3"  # bump whenever the prompt, JSON schema or scoring changes (v2.0 used 2026-10-v2)
 SCHEMA_VERSION = 1
@@ -80,6 +80,21 @@ RATE_LIMIT_PER_MINUTE = 5
 ALLOW_NO_FILING_ANALYSIS = True  # analyse even with no filings (the scorer then caps the score at 54)
 LLM_CACHE_ENABLED = True         # reuse an identical analysis within the same inputs
 HORIZON = "the next 2 quarters (about 6 months)"   # wording used inside the prompt
+
+# ----------------------------------------------------- financial data (step 8)
+# Values the recovered collector reads. FIN_CACHE_SCHEMA is from the README v2.0 reference;
+# the others come from the old reconstruction and are marked [CONFIRM].
+PROVIDER_ATTEMPTS = 3            # [CONFIRM]
+PROVIDER_RETRY_DELAY = 2.0       # seconds, multiplied by the attempt number [CONFIRM]
+MIN_USABLE_FIELDS = 4            # below this the data quality is "insufficient" [CONFIRM]
+MERGE_MODE = "fill_missing"      # first provider wins per field, later ones fill gaps [CONFIRM]
+ALLOW_DERIVED_MARGINS = False    # [CONFIRM]
+DALAL_DE_UNIT = (os.environ.get("DALAL_DE_UNIT", "") or "").strip().lower() or None
+ANN_WINDOW_DAYS = 365            # look-back for exchange announcements (the collector's own default)
+BSE_CODE_FILE = str(BASE_DIR / "bse_codes.csv")   # optional: columns ticker, bse_code
+FIN_CACHE_ENABLED = True
+FIN_CACHE_DIR = str(CACHE_DIR / "financials")     # one file per ticker per day
+FIN_CACHE_SCHEMA = 2             # README v2.0 configuration reference
 
 # ------------------------------------------------- filings and context builder
 # Values from the README v2.0 configuration reference (recovered from the project files).

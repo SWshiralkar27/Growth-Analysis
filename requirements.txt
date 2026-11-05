@@ -1,5 +1,7 @@
-# Dependencies. Later steps add yfinance.
+# Dependencies.
 streamlit>=1.36
 pandas>=2.0
 pypdf>=4.0
 google-genai
+yfinance
+dalal==0.2.1

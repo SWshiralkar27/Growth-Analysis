@@ -1,6 +1,6 @@
 """
 pipeline.py
-Version: Step 7, v0.7.0 (2026-11-04). Code version 2026-11-step7.
+Version: Step 8, v0.8.0 (2026-11-04). Code version 2026-11-step8.
 Spec: README v3.1 DRAFT, sections 4, 5 and 10.
 
 Purpose: the orchestrator. Sequences the per-ticker stages, handles failures,
@@ -8,7 +8,8 @@ ranks the results and returns plain data. It contains no scoring maths, no
 data fetching and no UI code.
 
 Status: every stage is a STUB except the store (step 2), the scorer (step 3), the
-filings reader (step 4) and the AI analysis for non-demo tickers (step 7). Real modules replace
+filings reader (step 4), and the data fetch and AI analysis for non-demo tickers
+(steps 7 and 8). Real modules replace
 the stubs one step at a time by passing a different `Stages` object; nothing
 else changes.
 
@@ -37,6 +38,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Optional
 
 import config
+import data_fetch
 import filings
 import gemini_analyser
 import pdf_extractor
@@ -204,6 +206,23 @@ DEMO_TICKERS = frozenset({"FAKE", "STALE429", "NOPRIOR429", "FAILPERM"})
 _LIMITER = RateLimiter(config.RATE_LIMIT_PER_MINUTE)
 
 
+def make_real_fetch(fetch_fn=None):
+    """The fetch stage backed by data_fetch. fetch_fn is for tests.
+
+    No data at all, or data quality "insufficient", is a PermanentError: a stock is not scored
+    on almost nothing (this follows the old orchestrator). Partial data is accepted and the
+    missing fields are listed in the result.
+    """
+    def fetch(ticker: str) -> dict:
+        record = (fetch_fn or data_fetch.get_financial_data)(ticker)
+        if not record:
+            raise PermanentError("no financial data from any provider")
+        if record.get("data_quality") == "insufficient":
+            raise PermanentError("insufficient fundamental data to score reliably")
+        return {"financials": record, "price_history": {}}
+    return fetch
+
+
 def make_real_analyse(generate_fn=None, limiter=None, sleep=time.sleep, cache_dir=None):
     """The analyse stage backed by gemini_analyser. generate_fn is for tests; the default
     builds the real Gemini call from the GEMINI_API_KEY secret."""
@@ -229,7 +248,14 @@ def score_stage_v21(ticker, analysis, financials, indicators, manual,
     labels = [f"Quality and governance score, model {bd['scoring_model']} (0 to 100)"]
     if analysis is None:
         labels.append("No LLM analysis: LLM component scored at the prior")
-    if (financials or {}).get("stub"):
+    fin = financials or {}
+    if fin.get("data_quality"):
+        providers = ", ".join(fin.get("providers_used") or []) or "none"
+        missing = len(fin.get("missing_fields") or [])
+        warns = len(fin.get("warnings") or [])
+        labels.append(f"Data quality: {fin['data_quality']} (providers: {providers}; "
+                      f"{missing} core field(s) missing; {warns} warning(s))")
+    if fin.get("stub"):
         labels.append("STUB data: every signal scored at the prior")
     if getattr(config, "UNVERIFIED_GOVERNANCE_CAP", None) is None:
         labels.append("Unverified-governance cap is OFF (value not recovered)")
@@ -416,20 +442,28 @@ def seed_demo_prior(store: Any) -> None:
         pass  # demo scaffolding only; it must never break a run
 
 
-def make_stub_stages(store: Any = None, analyse_fn: Any = None) -> tuple[Stages, Any]:
+def make_stub_stages(store: Any = None, analyse_fn: Any = None,
+                     fetch_fn: Any = None) -> tuple[Stages, Any]:
     """Stub stages. With store=None an in-memory StubStore is used (tests).
     Pass default_store() to use the real file-backed store. The four demo tickers use the
-    stub analysis; every other ticker uses analyse_fn, or the real Gemini analysis by default."""
+    stub analysis and stub data; every other ticker uses analyse_fn / fetch_fn, or the real
+    Gemini analysis and the real data fetch by default."""
     use_memory_store = store is None
     if use_memory_store:
         store = StubStore()
     else:
         seed_demo_prior(store)
 
-    @_stub
-    def fetch(ticker: str) -> dict:
+    def stub_fetch(ticker: str) -> dict:
         return {"financials": {"ticker": ticker, "stub": True},
                 "price_history": {"ticker": ticker, "bars": [], "stub": True}}
+
+    real_fetch = make_real_fetch(fetch_fn)
+
+    def fetch(ticker: str) -> dict:
+        if ticker in DEMO_TICKERS:
+            return stub_fetch(ticker)
+        return real_fetch(ticker)
 
     @_stub
     def indicators(price_history: dict) -> dict:

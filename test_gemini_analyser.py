@@ -1,6 +1,6 @@
 """
 test_gemini_analyser.py
-Version: Step 7, v0.7.0 (2026-11-04).
+Version: Step 8, v0.8.0 (2026-11-04).
 Tests for gemini_analyser.py, rate_limiter.py and the real analyse stage in the pipeline.
 Gemini is replaced by a fake function, so no key, package or network is needed. The live
 Gemini call itself (SDK, model name, response format) can only be proved in the running app.
@@ -377,6 +377,10 @@ class RateLimiterTests(unittest.TestCase):
 
 
 # ------------------------------------------------------------- pipeline stage
+GOOD_RECORD = {"ticker": "TCS", "data_quality": "complete", "providers_used": ["yfinance"],
+               "missing_fields": [], "warnings": [], "revenue_growth": 0.12, "ebitda_margin": 0.2}
+
+
 class PipelineAnalyseTests(unittest.TestCase):
     def setUp(self):
         pipeline.reset_mirror()
@@ -397,7 +401,7 @@ class PipelineAnalyseTests(unittest.TestCase):
         analyse = pipeline.make_real_analyse(generate_fn=fake, limiter=CountLimiter(),
                                              sleep=lambda s: None,
                                              cache_dir=Path(self._tmp.name) / "cache")
-        return pipeline.make_stub_stages(analyse_fn=analyse)
+        return pipeline.make_stub_stages(analyse_fn=analyse, fetch_fn=lambda t: GOOD_RECORD)
 
     def test_a_real_ticker_is_analysed_scored_and_counted(self):
         stages, store = self.stages(Fake(json.dumps(answer())))
@@ -440,7 +444,7 @@ class PipelineAnalyseTests(unittest.TestCase):
         self.assertEqual(by["FAKE"].status, "ok")
 
     def test_without_a_key_a_real_ticker_fails_with_a_clear_message(self):
-        stages, _ = pipeline.make_stub_stages()          # default real analysis, no key in the environment
+        stages, _ = pipeline.make_stub_stages(fetch_fn=lambda t: GOOD_RECORD)  # real analysis, no key in the environment
         r = pipeline.run_pipeline(["TCS"], 30, stages).results[0]
         self.assertEqual(r.status, "failed")
         self.assertIn("GEMINI_API_KEY", r.stage_errors["analyse"])

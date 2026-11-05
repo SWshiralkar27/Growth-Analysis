@@ -1,8 +1,8 @@
 # Equity Growth Analyst
 
-Version: Step 7, v0.7.0 (2026-11-04). Code version 2026-11-step7. Spec: README v3.1 DRAFT.
+Version: Step 8, v0.8.0 (2026-11-04). Code version 2026-11-step8. Spec: README v3.1 DRAFT.
 
-Python research engine for Indian listed equities. **Steps 1 to 7 are a skeleton with a real store, scorer, filings reader, upload box, permanent storage and AI analysis**: config, an orchestrator, an atomic file store, the recovered v2.1 scorer, the filings reader, a filing upload panel, a copy to a private GitHub data repository, the Gemini analysis and a Streamlit front end. Data fetching is still a stub, so every financial signal is scored at the prior.
+Python research engine for Indian listed equities. **Steps 1 to 8 are a working pipeline with a real store, scorer, filings reader, upload box, permanent storage, financial data fetch and AI analysis**: config, an orchestrator, an atomic file store, the recovered v2.1 scorer, the filings reader, a filing upload panel, a copy to a private GitHub data repository, the financial data fetch, the Gemini analysis and a Streamlit front end. Technicals and the Price-Impact score are not built yet.
 
 ## Run locally
 
@@ -41,6 +41,10 @@ Streamlit Cloud's disk is temporary, so the app can copy saved analyses and uplo
 
 Without these secrets the app works exactly as before, with temporary storage. A failed backup never stops an analysis; it is shown on screen as "not backed up". Nothing is deleted from the data repository except when you tap Remove on a filing. Very large PDFs (near 50 MB) may fail to copy; test with a real one.
 
+## Financial data
+
+Any ticker other than the four demo tickers fetches data from Yahoo (yfinance, NSE then BSE symbol) and then BSE/NSE (the `dalal` package), merges it (first provider wins, later ones fill gaps), records which provider gave each number and flags numbers the providers disagree on. Missing values stay missing; nothing is invented. A ticker with too little data (data quality "insufficient") is shown as failed and is not scored. Partial data is scored with the missing fields listed. Results are cached for the day. Yahoo and the exchanges may rate-limit shared cloud servers, so expect warnings.
+
 ## The AI analysis (Gemini)
 
 Add your key in the Streamlit secrets (never in the code repository):
@@ -67,6 +71,7 @@ Optional: `GEMINI_MODEL` (default `gemini-3.5-flash`) and `GEMINI_THINKING_LEVEL
     pdf_extractor.py  reads filing PDFs and builds the AI context (unchanged logic)
     filings.py        saves, lists and removes uploaded filing PDFs (atomic, never overwrites)
     persistence.py    copies saved records and filings to a private GitHub repository and restores them
+    data_fetch.py     financial data from Yahoo (yfinance) and BSE/NSE (dalal): ratios, statement trends, EPS revisions, shareholding, announcements
     gemini_analyser.py  asks Gemini for a structured analysis and verifies every quote (prompt and schema rebuilt)
     rate_limiter.py   spaces Gemini calls (5 a minute)
     test_step1.py     tests for config, tickers, pipeline
@@ -75,6 +80,7 @@ Optional: `GEMINI_MODEL` (default `gemini-3.5-flash`) and `GEMINI_THINKING_LEVEL
     test_pdf_extractor.py  tests for the filings reader and context builder
     test_filings.py   tests for the upload engine
     test_persistence.py  tests for the permanent-storage copy (uses a fake GitHub)
+    test_data_fetch.py  tests for the data fetch (uses fake Yahoo and dalal)
     test_gemini_analyser.py  tests for the analyser, retries, cache and the pipeline stage (uses a fake Gemini)
 
 ## Demo tickers (stub stages)

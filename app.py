@@ -1,6 +1,6 @@
 """
 app.py
-Version: Step 7, v0.7.0 (2026-11-04). Code version 2026-11-step7.
+Version: Step 8, v0.8.0 (2026-11-04). Code version 2026-11-step8.
 Spec: README v3.1 DRAFT, sections 5.3 and 13 (Streamlit replaces the desktop
 GUI; this is a spec change awaiting recording in v3.2).
 
@@ -201,6 +201,8 @@ def render_run_panel(horizon: int) -> None:
     )
     if not config.has_secret("gemini_api_key"):
         st.caption("No Gemini key is set, so any ticker other than the four demo tickers will show as failed.")
+    st.caption("Real tickers fetch financial data from Yahoo and BSE, which can take 10 to 40 seconds and "
+               "may be limited on shared servers. A ticker with almost no data is shown as failed, not scored.")
     with st.expander("Demo tickers for the stub stages"):
         st.markdown(
             "- `FAKE`: normal run, status ok\n"
@@ -229,11 +231,11 @@ def render_run_panel(horizon: int) -> None:
 def main() -> None:
     st.title("Equity Growth Analyst")
     st.warning(
-        "Skeleton: the store, the scorer, the filings reader, the upload box, "
-        "the permanent-storage copy and the AI analysis are real. Data fetching "
-        "is still a stub, so every financial signal is scored at the 35% prior. "
-        "The four demo tickers use a fake analysis and all show the same total. "
-        "Any other ticker reads your uploaded filings and calls Gemini."
+        "The store, the scorer, the filings reader, the upload box, the permanent-storage "
+        "copy, the financial data fetch and the AI analysis are real. Any ticker other than "
+        "the four demo tickers fetches financial data (Yahoo and BSE), reads your uploaded "
+        "filings and calls Gemini. The demo tickers use fake data and all show the same total. "
+        "Technicals and the Price-Impact score are not built yet."
     )
 
     try:

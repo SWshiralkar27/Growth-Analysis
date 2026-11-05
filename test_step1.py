@@ -64,7 +64,7 @@ class PipelineTests(unittest.TestCase):
         r = run.results[0]
         self.assertEqual(r.status, "ok")
         self.assertEqual(r.rank, 1)
-        self.assertIn("fetch", r.stubbed_stages)
+        self.assertIn("indicators", r.stubbed_stages)
         self.assertNotIn("score", r.stubbed_stages)  # the scorer is real from step 3
         self.assertIn("FAKE", store.records)
 
@@ -127,7 +127,8 @@ class PipelineTests(unittest.TestCase):
                 pipeline.run_pipeline(["FAKE"], bad)
 
     def test_multiple_workers_keep_input_order_before_ranking(self):
-        run = pipeline.run_pipeline(["A1", "A2", "A3", "A4"], 30, max_workers=4)
+        with mock.patch.object(pipeline, "DEMO_TICKERS", frozenset({"A1", "A2", "A3", "A4"})):
+            run = pipeline.run_pipeline(["A1", "A2", "A3", "A4"], 30, max_workers=4)
         self.assertEqual([r.ticker for r in run.results], ["A1", "A2", "A3", "A4"])
 
 
