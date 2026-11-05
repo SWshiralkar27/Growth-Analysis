@@ -1,6 +1,6 @@
 """
 pipeline.py
-Version: Step 8, v0.8.0 (2026-11-04). Code version 2026-11-step8.
+Version: Step 9, v0.9.0 (2026-11-05). Code version 2026-11-step9.
 Spec: README v3.1 DRAFT, sections 4, 5 and 10.
 
 Purpose: the orchestrator. Sequences the per-ticker stages, handles failures,
@@ -27,10 +27,12 @@ from __future__ import annotations
 
 import copy
 import glob
+import io
 import os
 import re
 import threading
 import time
+import zipfile
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
@@ -43,6 +45,7 @@ import filings
 import gemini_analyser
 import pdf_extractor
 import persistence
+import report_generator
 import score_card
 from errors import PermanentError, TransientError
 from rate_limiter import RateLimiter
@@ -90,6 +93,9 @@ class TickerResult:
     stubbed_stages: list = field(default_factory=list)
     prior_used: bool = False
     documents: list = field(default_factory=list)   # filings read for this ticker
+    unreadable: list = field(default_factory=list)  # [name, reason] for filings that could not be read
+    financials: dict = field(default_factory=dict)  # the data used (for the report and details view)
+    analysis: Optional[dict] = None                 # the AI analysis used (fresh or the prior one)
     rank: Optional[int] = None
     schema_version: int = config.SCHEMA_VERSION
 
@@ -263,6 +269,8 @@ def score_stage_v21(ticker, analysis, financials, indicators, manual,
     components = {
         "llm_component": {"points": bd["llm_component"], "max": 60.0},
         "fin_level": {"points": bd["fin_level"], "max": 20.0},
+        "scoring_model": bd["scoring_model"],
+        "financial_bonus": bd["financial_bonus"],
         "fin_direction": {"points": bd["fin_direction"], "max": 14.0},
         "fin_valuation": {"points": bd["fin_valuation"], "max": 6.0},
         "governance_penalty": {"points": bd["governance_penalty"]},
@@ -428,6 +436,130 @@ def backup_store_record(store, ticker: str):
     return push_local(store.path_for(ticker))
 
 
+# ----------------------------------------------------------------- reports
+def _legacy_breakdown(b: dict) -> dict:
+    """Rebuild the v2.1 scorer's breakdown dict (what report_generator reads) from a saved
+    ScoreBreakdown (as a dict). No numbers are recomputed."""
+    c = b.get("components", {}) or {}
+
+    def pts(key):
+        return (c.get(key) or {}).get("points", 0)
+
+    notes = c.get("notes", {}) or {}
+    return {
+        "scoring_model": c.get("scoring_model", "v2.1"),
+        "llm_component": pts("llm_component"),
+        "financial_bonus": c.get("financial_bonus", round(pts("fin_level") + pts("fin_direction") + pts("fin_valuation"), 1)),
+        "fin_level": pts("fin_level"), "fin_direction": pts("fin_direction"), "fin_valuation": pts("fin_valuation"),
+        "governance_penalty": pts("governance_penalty"),
+        "raw_score": c.get("raw_score"),
+        "llm_coverage": c.get("llm_coverage") or 0,
+        "factor_notes": notes.get("factor_notes", []),
+        "financial_notes": notes.get("financial_notes", []),
+        "governance_notes": notes.get("governance_notes", []),
+    }
+
+
+def _report_html(ticker, financials, analysis, breakdown: dict, has_filing: bool, meta: dict) -> Optional[str]:
+    total = breakdown.get("total")
+    if total is None:
+        return None
+    score_result = {"score": total, "breakdown": _legacy_breakdown(breakdown)}
+    return report_generator.create_html_report(ticker, financials or {}, analysis or {}, score_result,
+                                               has_filing=has_filing, meta=meta)
+
+
+def build_report(result: "TickerResult") -> Optional[str]:
+    """The per-stock HTML report for a run result, or None if the ticker was not scored.
+    Reports for stale or partial results use the prior or missing analysis; the recovered
+    report format has no marker for that, so the app labels them."""
+    if result.breakdown is None or result.breakdown.total is None or result.status == config.STATUS_FAILED:
+        return None
+    meta = {"financial_as_of_date": (result.financials or {}).get("as_of_date")}
+    if result.status == config.STATUS_OK:
+        meta["analysis_date"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        meta["cache_hit"] = bool((result.analysis or {}).get("from_cache"))
+    return _report_html(result.ticker, result.financials, result.analysis, asdict(result.breakdown),
+                        bool(result.documents), meta)
+
+
+def report_from_record(ticker: str, record: dict) -> Optional[str]:
+    """Rebuild a report from a saved record, without calling any provider or Gemini."""
+    breakdown = (record or {}).get("breakdown") or {}
+    analysis = (record or {}).get("analysis") or {}
+    meta = {"analysis_date": (record or {}).get("saved_at"),
+            "cache_hit": bool(analysis.get("from_cache")),
+            "financial_as_of_date": ((record or {}).get("financials") or {}).get("as_of_date")}
+    return _report_html(ticker, (record or {}).get("financials"), analysis, breakdown,
+                        bool(analysis.get("documents_used")), meta)
+
+
+def build_dashboard(results: list) -> str:
+    """The ranked dashboard page (links point at TICKER.html next to it)."""
+    rows = []
+    for r in results:
+        b = r.breakdown
+        if b is None or b.total is None or r.status == config.STATUS_FAILED:
+            continue
+        rows.append({"Ticker": r.ticker, "Score": b.total, "Rating": score_card.rating_for_score(b.total),
+                     "Has_Filing": bool(r.documents), "Report": f"{r.ticker}.html"})
+    return report_generator.create_portfolio_report(rows)
+
+
+def build_reports_zip(results: list) -> bytes:
+    """Dashboard plus one report per scored ticker, in a zip so the dashboard links work."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("Portfolio_Dashboard.html", build_dashboard(results))
+        for r in results:
+            html = build_report(r)
+            if html:
+                zf.writestr(f"{r.ticker}.html", html)
+    return buffer.getvalue()
+
+
+def data_notes(result: "TickerResult") -> dict:
+    """Plain facts for the details view: where the data came from and what went wrong."""
+    fin = result.financials or {}
+    return {
+        "providers": list(fin.get("providers_used") or []),
+        "data_quality": fin.get("data_quality"),
+        "missing_fields": list(fin.get("missing_fields") or []),
+        "warnings": [str(w) for w in (fin.get("warnings") or [])],
+        "conflicts": fin.get("conflicts") or [],
+        "governance_sources": list(fin.get("governance_sources") or []),
+        "filings_read": list(result.documents),
+        "filings_unreadable": list(result.unreadable),
+        "stage_errors": dict(result.stage_errors),
+    }
+
+
+def saved_tickers() -> list:
+    try:
+        return default_store().list_tickers()
+    except Exception:
+        return []
+
+
+def load_saved(ticker: str):
+    """A saved record (after restoring from permanent storage), or None. Never raises."""
+    ensure_local_store_record(ticker)
+    try:
+        return default_store().load(ticker)
+    except Exception:
+        return None
+
+
+def ensure_local_store_record(ticker: str) -> None:
+    mirror = get_mirror()
+    if mirror is None:
+        return
+    try:
+        mirror.pull_missing(("store/",))
+    except Exception:
+        pass
+
+
 def default_store() -> Store:
     """The real file-backed store (step 2)."""
     return Store(config.STORE_DIR)
@@ -522,6 +654,9 @@ def process_ticker(ticker: str, horizon_days: int, stages: Stages,
     status = config.STATUS_OK
     prior_used = False
     documents_read: list = []
+    unreadable_files: list = []
+    financials: dict = {}
+    analysis: Optional[dict] = None
 
     def notify(stage: str, state: str) -> None:
         if on_progress is None:
@@ -557,7 +692,8 @@ def process_ticker(ticker: str, horizon_days: int, stages: Stages,
         return TickerResult(ticker=ticker, status=config.STATUS_FAILED,
                             stage_errors=errors, breakdown=None,
                             stubbed_stages=stubbed, prior_used=prior_used,
-                            documents=documents_read)
+                            documents=documents_read, unreadable=unreadable_files,
+                            financials=financials, analysis=analysis)
 
     # 1. fetch: without data nothing else can run
     fetched, err = run("fetch", stages.fetch, ticker)
@@ -584,6 +720,7 @@ def process_ticker(ticker: str, horizon_days: int, stages: Stages,
     context, ctx_err = run("filings_context", stages.filings_context, ticker)
     if isinstance(context, dict):
         documents_read = list(context.get("documents", []))
+        unreadable_files = [[str(n), str(r)] for n, r in (context.get("unreadable") or [])]
 
     # 5. analysis (needs context); fall back to the stored prior if it cannot run
     analysis: Optional[dict] = None
@@ -650,7 +787,8 @@ def process_ticker(ticker: str, horizon_days: int, stages: Stages,
 
     return TickerResult(ticker=ticker, status=status, stage_errors=errors,
                         breakdown=breakdown, stubbed_stages=stubbed,
-                        prior_used=prior_used, documents=documents_read)
+                        prior_used=prior_used, documents=documents_read,
+                        unreadable=unreadable_files, financials=financials, analysis=analysis)
 
 
 # ----------------------------------------------------------------- ranking

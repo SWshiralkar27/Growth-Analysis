@@ -1,0 +1,107 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>TCS Analysis</title>
+<style>
+body { font-family: -apple-system, sans-serif; max-width: 1000px; margin: 2rem auto; color: #222; }
+.badge { padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; font-weight: bold; }
+.badge.high { background: #d1fae5; color: #065f46; } 
+.badge.medium { background: #fef3c7; color: #92400e; } 
+.badge.low { background: #fee2e2; color: #991b1b; }
+.badge.none { background: #f1f5f9; color: #64748b; }
+.badge.strong { background: #d1fae5; color: #065f46; } .badge.good { background: #dbeafe; color: #1e40af; }
+.badge.mixed { background: #fef3c7; color: #92400e; } .badge.spec { background: #ffedd5; color: #9a3412; }
+.badge.avoid { background: #fee2e2; color: #991b1b; }
+table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+th, td { border: 1px solid #e2e8f0; padding: 0.75rem; text-align: left; vertical-align: top; }
+.ev { background: #f8fafc; padding: 0.5rem; margin-bottom: 0.5rem; border-radius: 4px; font-size: 0.9rem; }
+.muted { color: #94a3b8; font-style: italic; }
+.flex { display: flex; gap: 2rem; }
+</style></head><body>
+
+<h1>TCS Equity Analysis</h1>
+<p class="muted">Generated <TS> | Horizon: the next 2 quarters (about 6 months)</p>
+<p class='muted'>Analysis: 2026-11-05 · 🟢 From cache · Financials as-of: 2026-03-31</p>
+
+<div style='background:#fee2e2;padding:1rem;border-left:4px solid #dc2626;margin-bottom:1rem;'><strong>Score limited by a governance gate or cap, even if the raw score is higher</strong><ul style='margin:0.5rem 0 0 1rem;'><li>Capped at 69 (Governance unchecked: x)</li></ul></div><div style='background:#fef3c7;padding:1rem;border-left:4px solid #f59e0b;margin-bottom:1rem;'><strong>Governance items to verify manually (exchange-feed-only hits carry a reduced penalty; waived flags carry none)</strong><ul style='margin:0.5rem 0 0 1rem;'><li>CFO exit penalty waived (resolved)</li><li>exchange feed only: verify</li></ul></div>
+
+<div class="flex">
+    <div>
+        <h2>Score: <span class="badge mixed" style="font-size:1.5rem;">63.4/100</span></h2>
+        <p><strong>Mixed Signals</strong></p>
+    </div>
+</div>
+
+<h2>Score Breakdown</h2>
+<ul>
+    <li><strong>LLM Factor Score:</strong> 38.2 / 60 (Coverage: 62%)</li>
+    <li><strong>Financial Bonus:</strong> 30.1 / 40
+        <ul style="margin-top: 0.5rem; font-size: 0.9rem; color: #475569;">
+            <li>Level (Size/Profitability): 16.0 / 20</li>
+            <li>Direction (Growth/Acceleration): 9.1 / 14</li>
+            <li>Valuation & Ownership: 5.0 / 6</li>
+        </ul>
+    </li>
+    <li><strong>Governance Penalty:</strong> -5.0</li>
+    <li><strong>Raw Score:</strong> 63.3</li>
+    <li><strong>Scoring model:</strong> v2.1</li>
+</ul>
+<details><summary>View scoring notes</summary>
+    <ul>
+        <li>Business Catalysts: 70/100 (high confidence -&gt; +11.2/15)</li>
+        <li>[level 16.0/20] Revenue growth 12.0% (+3.6/6)</li>
+        <li>cfo_exit via filing (-5)</li><li>Capped at 69 (Governance unchecked: x)</li><li>CFO exit penalty waived (resolved)</li><li>exchange feed only: verify</li>
+    </ul>
+</details>
+
+<h2>Qualitative Factors</h2>
+<table class='factors'><thead><tr><th>Factor</th><th>Score</th><th>Confidence</th><th>Evidence</th></tr></thead><tbody>
+        <tr>
+            <td><strong>Business Catalysts</strong></td>
+            <td style="font-size:1.2rem; font-weight:bold;">70</td>
+            <td><span class='badge high'>HIGH</span></td>
+            <td><div class='ev'>✅ <strong>TCS_2026_05_12_AnnualReport.pdf</strong> p.3<br><em>"Order book at a record backlog"</em></div><div class='ev'>✅ <strong>TCS_2026_05_12_AnnualReport.pdf</strong> p.9<br><em>"Capacity expansion will commission"</em></div></td>
+        </tr>
+        <tr>
+            <td><strong>Market Expansion</strong></td>
+            <td style="font-size:1.2rem; font-weight:bold;">55</td>
+            <td><span class='badge medium'>MEDIUM</span></td>
+            <td><div class='ev'>❌ <strong>TCS_2026_05_12_AnnualReport.pdf</strong> p.4<br><em>"New export markets opened &amp; served"</em></div></td>
+        </tr>
+        <tr>
+            <td><strong>Order Book Growth</strong></td>
+            <td style="font-size:1.2rem; font-weight:bold;">50</td>
+            <td><span class='badge none'>NONE</span></td>
+            <td><span class="muted">No evidence provided</span></td>
+        </tr>
+        <tr>
+            <td><strong>Competitive Advantage</strong></td>
+            <td style="font-size:1.2rem; font-weight:bold;">60</td>
+            <td><span class='badge low'>LOW</span></td>
+            <td><span class="muted">No evidence provided</span></td>
+        </tr></tbody></table>
+
+<h2>Governance Flags</h2>
+<table class='gov'><thead><tr><th>Flag</th><th>Status</th><th>Verified</th><th>Evidence</th></tr></thead><tbody><tr><td>cfo_exit</td><td>🔴 RAISED</td><td>Yes</td><td><small>p.7: "CFO resigned w.e.f. 1 June"</small></td></tr><tr><td>auditor_resignation</td><td>🟢 Clear</td><td>No</td><td><small></small></td></tr></tbody></table>
+<h3>Exchange signals &amp; coverage</h3>
+<table><tr><th>Exchange signal</th><th>Count</th></tr><tr><td>Auditor resignation announcements</td><td>0</td></tr><tr><td>CFO exit announcements</td><td>1 🔴</td></tr><tr><td>Pledge invocation announcements</td><td>0</td></tr></table><p><strong>Filing governance sections read by the model:</strong> auditor_report, pledge</p><p><strong>Recent matching headlines (verify manually):</strong></p><ul><li>2026-09-01 &middot; ann_cfo_exit &middot; Intimation of resignation of Chief Financial Officer</li></ul>
+
+<h2>Financials & Smart Money</h2>
+<table>
+    <tr><th>Metric</th><th>Value</th></tr>
+    <tr><td>Market Cap</td><td>1200000000000.0</td></tr>
+    <tr><td>Revenue Growth (YoY, per data source)</td><td>0.12</td></tr>
+    <tr><td>EBITDA Margin</td><td>0.2</td></tr>
+    <tr><td>D/E Ratio</td><td>0.4</td></tr>
+    <tr><td>Interest Coverage</td><td>12.0</td></tr>
+    <tr><td>OCF / EBITDA</td><td>0.8</td></tr>
+    <tr><td>Promoter Holding</td><td>50.0%</td></tr>
+    <tr><td>Promoter Pledge</td><td>2.0%</td></tr>
+    <tr><td>EPS Revisions (90d)</td><td>0.05</td></tr>
+</table>
+
+<h2>Key Strengths</h2>
+<ul><li>Strong order book &lt;b&gt;growth&lt;/b&gt;</li></ul>
+
+<h2>Key Risks</h2>
+<ul><li>Execution &amp; timing</li></ul>
+
+</body></html>

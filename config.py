@@ -1,6 +1,6 @@
 """
 config.py
-Version: Step 8, v0.8.0 (2026-11-04). Code version 2026-11-step8.
+Version: Step 9, v0.9.0 (2026-11-05). Code version 2026-11-step9.
 Spec: README v3.1 DRAFT (v2.0 is binding where it differs).
 
 Purpose: constants, paths, versions, secret lookup, start-up checks.
@@ -22,7 +22,7 @@ from pathlib import Path
 from errors import ConfigError
 
 # ---------------------------------------------------------------- versions
-CODE_VERSION = "2026-11-step8"
+CODE_VERSION = "2026-11-step9"
 SPEC_VERSION = "v3.1-draft"
 PROMPT_VERSION = "2026-11-v3"  # bump whenever the prompt, JSON schema or scoring changes (v2.0 used 2026-10-v2)
 SCHEMA_VERSION = 1

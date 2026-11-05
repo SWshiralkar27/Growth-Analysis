@@ -1,6 +1,6 @@
 """
 app.py
-Version: Step 8, v0.8.0 (2026-11-04). Code version 2026-11-step8.
+Version: Step 9, v0.9.0 (2026-11-05). Code version 2026-11-step9.
 Spec: README v3.1 DRAFT, sections 5.3 and 13 (Streamlit replaces the desktop
 GUI; this is a spec change awaiting recording in v3.2).
 
@@ -18,6 +18,7 @@ from datetime import date
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 import config
 import pipeline
@@ -115,11 +116,74 @@ def render_result(result: pipeline.RunResult) -> None:
                 st.markdown(f"**{r.ticker}** ({r.status})")
                 for stage, msg in r.stage_errors.items():
                     st.text(f"  {stage}: {msg}")
+    render_details(result)
     st.caption(
         f"Horizon {result.horizon_days} days | code {result.code_version} | "
         f"spec {result.spec_version} | prompt {result.prompt_version} | "
         f"finished {result.finished_at}"
     )
+
+
+def render_details(result: pipeline.RunResult) -> None:
+    """Per-ticker data notes and the HTML report, plus the downloads for the whole run."""
+    scored = [r for r in result.results if pipeline.build_report(r)]
+    if scored:
+        st.download_button("Download all reports (zip)", pipeline.build_reports_zip(result.results),
+                           file_name="reports.zip", mime="application/zip")
+    st.subheader("Details")
+    for r in result.results:
+        with st.expander(f"{r.ticker}: {r.status}"):
+            notes = pipeline.data_notes(r)
+            st.markdown("**Data**")
+            st.text(f"Quality: {notes['data_quality'] or 'n/a'} | providers: "
+                    f"{', '.join(notes['providers']) or 'none'}")
+            if notes["missing_fields"]:
+                st.text("Missing core fields: " + ", ".join(notes["missing_fields"]))
+            if notes["governance_sources"]:
+                st.text("Governance feeds that answered: " + ", ".join(notes["governance_sources"]))
+            else:
+                st.text("Governance feeds that answered: none")
+            for w in notes["warnings"]:
+                st.caption(f"Warning: {w}")
+            st.markdown("**Filings**")
+            st.text("Read: " + (", ".join(notes["filings_read"]) or "none"))
+            for name, reason in notes["filings_unreadable"]:
+                st.caption(f"Could not read {name}: {reason}")
+            for stage, msg in notes["stage_errors"].items():
+                st.caption(f"{stage}: {msg}")
+            html = pipeline.build_report(r)
+            if html:
+                if r.status != "ok":
+                    st.warning("This report uses a prior or missing analysis (status "
+                               f"{r.status}); the report itself does not show that.")
+                components.html(html, height=700, scrolling=True)
+                st.download_button(f"Download {r.ticker} report (HTML)", html.encode("utf-8"),
+                                   file_name=f"{r.ticker}.html", mime="text/html", key=f"dl_{r.ticker}")
+    if scored:
+        st.download_button("Download dashboard (HTML)", pipeline.build_dashboard(result.results).encode("utf-8"),
+                           file_name="Portfolio_Dashboard.html", mime="text/html")
+
+
+def render_saved_panel() -> None:
+    st.subheader("Saved analyses")
+    st.caption("Reports rebuilt from saved analyses, without calling Yahoo, the exchanges or Gemini.")
+    tickers = pipeline.saved_tickers()
+    if not tickers:
+        st.caption("Nothing saved yet. Run a ticker first.")
+        return
+    ticker = st.selectbox("Ticker", tickers)
+    record = pipeline.load_saved(ticker)
+    if not record:
+        st.error("That saved record could not be read.")
+        return
+    st.caption(f"Saved {record.get('saved_at', 'date unknown')} | prompt {record.get('prompt_version')}")
+    html = pipeline.report_from_record(ticker, record)
+    if not html:
+        st.info("This record has no score to report.")
+        return
+    components.html(html, height=700, scrolling=True)
+    st.download_button(f"Download {ticker} report (HTML)", html.encode("utf-8"),
+                       file_name=f"{ticker}.html", mime="text/html", key=f"saved_{ticker}")
 
 
 def _clear_uploader() -> None:
@@ -261,11 +325,13 @@ def main() -> None:
             st.caption("Stored analyses: unavailable")
         st.caption(f"Code {config.CODE_VERSION} | spec {config.SPEC_VERSION}")
 
-    tab_run, tab_files = st.tabs(["Run analysis", "Filings"])
+    tab_run, tab_files, tab_saved = st.tabs(["Run analysis", "Filings", "Saved analyses"])
     with tab_run:
         render_run_panel(horizon)
     with tab_files:
         render_filings_panel()
+    with tab_saved:
+        render_saved_panel()
 
 
 main()

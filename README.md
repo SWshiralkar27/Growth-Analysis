@@ -1,8 +1,8 @@
 # Equity Growth Analyst
 
-Version: Step 8, v0.8.0 (2026-11-04). Code version 2026-11-step8. Spec: README v3.1 DRAFT.
+Version: Step 9, v0.9.0 (2026-11-05). Code version 2026-11-step9. Spec: README v3.1 DRAFT.
 
-Python research engine for Indian listed equities. **Steps 1 to 8 are a working pipeline with a real store, scorer, filings reader, upload box, permanent storage, financial data fetch and AI analysis**: config, an orchestrator, an atomic file store, the recovered v2.1 scorer, the filings reader, a filing upload panel, a copy to a private GitHub data repository, the financial data fetch, the Gemini analysis and a Streamlit front end. Technicals and the Price-Impact score are not built yet.
+Python research engine for Indian listed equities. **Steps 1 to 9 are a working pipeline with a real store, scorer, filings reader, upload box, permanent storage, financial data fetch, AI analysis and HTML reports**: config, an orchestrator, an atomic file store, the recovered v2.1 scorer, the filings reader, a filing upload panel, a copy to a private GitHub data repository, the financial data fetch, the Gemini analysis, the HTML reports and a Streamlit front end. Technicals and the Price-Impact score are not built yet.
 
 ## Run locally
 
@@ -41,6 +41,10 @@ Streamlit Cloud's disk is temporary, so the app can copy saved analyses and uplo
 
 Without these secrets the app works exactly as before, with temporary storage. A failed backup never stops an analysis; it is shown on screen as "not backed up". Nothing is deleted from the data repository except when you tap Remove on a filing. Very large PDFs (near 50 MB) may fail to copy; test with a real one.
 
+## Reports and details
+
+After a run, each ticker has a **Details** panel: where its data came from, every data warning, which filings were read or could not be read, and the HTML report shown inline with a download button. You can also download all reports and the ranked dashboard as one zip (the dashboard links to the reports next to it). The **Saved analyses** tab rebuilds a report from a saved record without calling Yahoo, the exchanges or Gemini. The report format is the recovered original and must not change without approval; the golden files in the repository guard it. A report for a stale or partial result uses a prior or missing analysis, and the report format itself does not say so, so the app shows a warning beside it.
+
 ## Financial data
 
 Any ticker other than the four demo tickers fetches data from Yahoo (yfinance, NSE then BSE symbol) and then BSE/NSE (the `dalal` package), merges it (first provider wins, later ones fill gaps), records which provider gave each number and flags numbers the providers disagree on. Missing values stay missing; nothing is invented. A ticker with too little data (data quality "insufficient") is shown as failed and is not scored. Partial data is scored with the missing fields listed. Results are cached for the day. Yahoo and the exchanges may rate-limit shared cloud servers, so expect warnings.
@@ -71,6 +75,7 @@ Optional: `GEMINI_MODEL` (default `gemini-3.5-flash`) and `GEMINI_THINKING_LEVEL
     pdf_extractor.py  reads filing PDFs and builds the AI context (unchanged logic)
     filings.py        saves, lists and removes uploaded filing PDFs (atomic, never overwrites)
     persistence.py    copies saved records and filings to a private GitHub repository and restores them
+    report_generator.py  the per-stock HTML report and ranked dashboard (recovered format, unchanged)
     data_fetch.py     financial data from Yahoo (yfinance) and BSE/NSE (dalal): ratios, statement trends, EPS revisions, shareholding, announcements
     gemini_analyser.py  asks Gemini for a structured analysis and verifies every quote (prompt and schema rebuilt)
     rate_limiter.py   spaces Gemini calls (5 a minute)
@@ -81,6 +86,7 @@ Optional: `GEMINI_MODEL` (default `gemini-3.5-flash`) and `GEMINI_THINKING_LEVEL
     test_filings.py   tests for the upload engine
     test_persistence.py  tests for the permanent-storage copy (uses a fake GitHub)
     test_data_fetch.py  tests for the data fetch (uses fake Yahoo and dalal)
+    test_report_generator.py  tests for the reports, with golden_report_v21.html and golden_dashboard_v21.html as format guards
     test_gemini_analyser.py  tests for the analyser, retries, cache and the pipeline stage (uses a fake Gemini)
 
 ## Demo tickers (stub stages)
