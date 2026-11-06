@@ -1,11 +1,17 @@
 # =====================================================
 # data_fetch.py   (the recovered Fiscal_Data_collector.py)
-# PORTED INTO THE STEP 8 LAYOUT: Step 8, v0.8.0 (2026-11-04). Code version 2026-11-step8.
-# The collection logic below is the recovered code. Only TWO small changes were made:
-#   1. _safe_call no longer retries AttributeError (a function that does not exist cannot
-#      succeed on retry, so retrying only wasted seconds).
-#   2. get_financial_data converts its record to plain JSON-safe data (dates, numpy numbers,
-#      NaN) so the store can save it; values are unchanged.
+# Step 10c, v0.10.1 (2026-11-06). Code version 2026-11-step9 (config.py unchanged).
+# PORTED INTO THE STEP 8 LAYOUT (2026-11-04). The collection logic below is the recovered code.
+# Changes from the recovered original:
+#   1. (Step 8) _safe_call no longer retries AttributeError (a function that does not exist
+#      cannot succeed on retry, so retrying only wasted seconds).
+#   2. (Step 8) get_financial_data converts its record to plain JSON-safe data (dates, numpy
+#      numbers, NaN) so the store can save it; values are unchanged.
+#   3. (Step 10c) _shareholding_metrics understands the NSE shareholding-pattern rows that
+#      dalal.shareholding really returns (seen in the Diagnostics tab on 2026-11-06): promoter
+#      holding comes from "pr_and_prgrp", quarters from "date". The old tolerant parser is kept
+#      as the fallback for any other row shape. This feed has NO pledge and NO FII/DII split,
+#      so those stay blank (never invented) and a warning says so.
 # Spec: README v3.1 DRAFT section 6 (data acquisition).
 # Multi-provider fundamentals + statement trends +
 # estimate revisions + exchange-sourced governance data.
@@ -644,8 +650,9 @@ def _estimate_metrics(stock, warnings: list) -> dict:
 # =====================================================
 # dalal: shareholding, announcements, block deals (exchange-sourced)
 # =====================================================
-# NOTE: dalal's response shapes could not be verified offline. These parsers are tolerant and
-# fail LOUDLY (a warning naming the keys they saw). Run probe_dalal.py once to confirm.
+# NOTE: dalal.shareholding's real reply shape was seen on 2026-11-06 (Diagnostics tab): a list of
+# NSE shareholding-pattern filings, newest first. Announcements and block deals are still parsed
+# tolerantly and fail LOUDLY (a warning naming the keys they saw).
 
 _ANN_PATTERNS = {
     "ann_auditor_resignation": re.compile(
@@ -787,13 +794,73 @@ def _row_date(row: dict):
     return None
 
 
+_SHAREHOLDING_KEYS = ("promoter_holding", "promoter_holding_change", "institutional_holding",
+                      "institutional_holding_change", "promoter_pledge_pct", "promoter_pledge_change")
+
+
+def _nse_datetime(value: Any) -> Optional[datetime]:
+    """NSE dates such as '30-SEP-2026' or '15-OCT-2026 15:38:22' (month in capitals)."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip().title()
+    for fmt in ("%d-%b-%Y %H:%M:%S", "%d-%b-%Y"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _nse_shareholding_metrics(rows: list, warnings: list) -> dict:
+    """STEP 10c: NSE shareholding-pattern rows as dalal.shareholding really returns them.
+
+    Per row: "date" is the quarter end, "pr_and_prgrp" is the promoter and promoter-group holding
+    in PERCENT, "broadcastDate" is when it was filed. If a quarter was filed twice (a revision),
+    the most recently broadcast filing wins. The latest quarter gives promoter_holding; the
+    change is latest minus the previous quarter, in percentage points.
+
+    This feed has no pledge figure and no FII/DII split, so promoter_pledge_pct and the
+    institutional fields stay None (never guessed) and a warning says so.
+    """
+    out = {k: None for k in _SHAREHOLDING_KEYS}
+    quarters: dict = {}   # quarter-end date -> ((broadcast, -order), percent)
+    for order, row in enumerate(rows):
+        quarter = _nse_datetime(row.get("date"))
+        pct = _num(row.get("pr_and_prgrp"))
+        if quarter is None or pct is None or not (0.0 <= pct <= 100.0):
+            continue
+        broadcast = _nse_datetime(row.get("broadcastDate")) or datetime.min
+        key = (broadcast, -order)
+        q = quarter.date()
+        if q not in quarters or key > quarters[q][0]:
+            quarters[q] = (key, pct)
+
+    if not quarters:
+        warnings.append("dalal.shareholding: rows had no usable promoter holding (pr_and_prgrp) and quarter date")
+        return out
+
+    ordered = sorted(quarters.items(), key=lambda kv: kv[0], reverse=True)
+    latest_pct = ordered[0][1][1]
+    out["promoter_holding"] = latest_pct
+    if len(ordered) >= 2:
+        out["promoter_holding_change"] = round(latest_pct - ordered[1][1][1], 4)
+    else:
+        warnings.append("dalal.shareholding: only one quarter available, so promoter holding change is blank")
+    warnings.append("dalal.shareholding (NSE format) has no pledge figure and no FII/DII split: "
+                    "promoter pledge and institutional holding are left blank")
+    return out
+
+
 def _shareholding_metrics(payload: Any, warnings: list) -> dict:
-    out = {k: None for k in ("promoter_holding", "promoter_holding_change", "institutional_holding",
-                             "institutional_holding_change", "promoter_pledge_pct", "promoter_pledge_change")}
+    out = {k: None for k in _SHAREHOLDING_KEYS}
     rows = [r for r in _unwrap_list(payload) if isinstance(r, dict)]
     if not rows:
         warnings.append("dalal.shareholding returned no recognisable rows; run probe_dalal.py")
         return out
+
+    # STEP 10c: the NSE shareholding-pattern shape (seen live on 2026-11-06)
+    if any("pr_and_prgrp" in r for r in rows):
+        return _nse_shareholding_metrics(rows, warnings)
 
     dated = [(r, _row_date(r)) for r in rows]
     if all(d is not None for _, d in dated):
