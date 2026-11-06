@@ -1,15 +1,18 @@
 """
 app.py
-Version: Step 10b, v0.10.0 (2026-11-06). Code version 2026-11-step9 (config.py unchanged).
+Version: Step 10d, v0.10.2 (2026-11-06). Code version 2026-11-step9 (config.py unchanged).
 Spec: README v3.1 DRAFT, sections 5.3 and 13 (Streamlit replaces the desktop
 GUI; this is a spec change awaiting recording in v3.2).
 
 Changes in v0.10.0:
   - The stale notice "Component weights are not set..." is no longer shown (the scorer is
     real now). config.validate_config() still returns it.
-  - New read-only "Diagnostics" tab (dalal_probe). It shows what the dalal package really
-    has and returns. It touches no score, store or report. app.py imports dalal_probe
-    directly because it is a diagnostic tool, not an engine stage.
+  - New read-only "Diagnostics" tab (dalal_probe).
+Changes in v0.10.2:
+  - Diagnostics tab gets a second read-only button, "Run Yahoo probe" (yf_probe), that shows
+    which period Yahoo's revenue growth describes and the statement rows behind OCF/EBITDA.
+  app.py imports the two probe modules directly because they are diagnostic tools, not
+  engine stages. Neither touches any score, record or report.
 
 Purpose: Streamlit front end. It collects tickers and a horizon, runs the
 pipeline in a worker thread and shows progress from the main thread. It holds
@@ -31,6 +34,7 @@ import streamlit.components.v1 as components
 import config
 import dalal_probe
 import pipeline
+import yf_probe
 from errors import ConfigError, FilingError
 
 st.set_page_config(page_title="Equity Growth Analyst", layout="wide")
@@ -271,22 +275,12 @@ def render_filings_panel() -> None:
                 st.rerun()
 
 
-def render_diagnostics_panel() -> None:
-    st.subheader("Diagnostics")
-    st.caption("Read-only. Shows what the dalal package really has and what it returns. "
-               "It changes no score, record or report.")
-    raw = st.text_input("Ticker", key="diag_ticker", placeholder="for example BAJAJ-AUTO")
-    if st.button("Run dalal probe"):
-        tickers, rejected = pipeline.normalise_tickers(raw, 1) if raw.strip() else ([], [])
-        if not tickers:
-            st.error("Enter one valid ticker first.")
-        else:
-            with st.spinner("Asking dalal (this can take 10 to 40 seconds)..."):
-                st.session_state["diag_result"] = dalal_probe.probe(tickers[0])
+def _diag_ticker(raw: str):
+    tickers, _ = pipeline.normalise_tickers(raw, 1) if raw.strip() else ([], [])
+    return tickers[0] if tickers else None
 
-    result = st.session_state.get("diag_result")
-    if not result:
-        return
+
+def render_dalal_result(result: dict) -> None:
     if not result.get("installed"):
         st.error(result.get("note", "dalal is not installed"))
         return
@@ -299,6 +293,55 @@ def render_diagnostics_panel() -> None:
         with st.expander(f"{mark}: {call['label']}", expanded=call["label"].startswith("shareholding(")):
             st.code(json.dumps(call.get("result") or {"error": call.get("error")},
                                indent=2, default=str, ensure_ascii=False))
+
+
+def render_yf_result(result: dict) -> None:
+    if not result.get("installed"):
+        st.error(result.get("note", "yfinance is not installed"))
+        return
+    if not result.get("found"):
+        st.error("Yahoo returned nothing for this ticker.")
+        for line in result.get("errors", []):
+            st.caption(line)
+        return
+    st.text(f"Yahoo symbol: {result['symbol']} | statement values shown in: {result['unit']}")
+    for line in result["readings"]:
+        st.text(line)
+    with st.expander("Annual statements (newest column first)", expanded=True):
+        st.code(json.dumps(result["annual"], indent=2, default=str))
+    with st.expander("Quarterly revenue (newest column first)", expanded=True):
+        st.code(json.dumps(result["quarterly"], indent=2, default=str))
+    with st.expander("Yahoo info fields"):
+        st.code(json.dumps(result["info"], indent=2, default=str))
+    with st.expander("Row names matched"):
+        st.code(json.dumps(result["row_names_used"], indent=2, default=str))
+
+
+def render_diagnostics_panel() -> None:
+    st.subheader("Diagnostics")
+    st.caption("Read-only. These probes change no score, record or report.")
+    raw = st.text_input("Ticker", key="diag_ticker", placeholder="for example BAJAJ-AUTO")
+    col_a, col_b = st.columns(2)
+    run_dalal = col_a.button("Run dalal probe")
+    run_yf = col_b.button("Run Yahoo probe")
+
+    if run_dalal or run_yf:
+        ticker = _diag_ticker(raw)
+        if not ticker:
+            st.error("Enter one valid ticker first.")
+        elif run_dalal:
+            with st.spinner("Asking dalal (this can take 10 to 40 seconds)..."):
+                st.session_state["diag_result"] = dalal_probe.probe(ticker)
+        else:
+            with st.spinner("Asking Yahoo (this can take 10 to 40 seconds)..."):
+                st.session_state["diag_yf"] = yf_probe.probe(ticker)
+
+    if st.session_state.get("diag_yf"):
+        st.markdown("**Yahoo probe**")
+        render_yf_result(st.session_state["diag_yf"])
+    if st.session_state.get("diag_result"):
+        st.markdown("**dalal probe**")
+        render_dalal_result(st.session_state["diag_result"])
 
 
 def render_run_panel(horizon: int) -> None:
