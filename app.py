@@ -1,8 +1,15 @@
 """
 app.py
-Version: Step 9, v0.9.0 (2026-11-05). Code version 2026-11-step9.
+Version: Step 10b, v0.10.0 (2026-11-06). Code version 2026-11-step9 (config.py unchanged).
 Spec: README v3.1 DRAFT, sections 5.3 and 13 (Streamlit replaces the desktop
 GUI; this is a spec change awaiting recording in v3.2).
+
+Changes in v0.10.0:
+  - The stale notice "Component weights are not set..." is no longer shown (the scorer is
+    real now). config.validate_config() still returns it.
+  - New read-only "Diagnostics" tab (dalal_probe). It shows what the dalal package really
+    has and returns. It touches no score, store or report. app.py imports dalal_probe
+    directly because it is a diagnostic tool, not an engine stage.
 
 Purpose: Streamlit front end. It collects tickers and a horizon, runs the
 pipeline in a worker thread and shows progress from the main thread. It holds
@@ -12,6 +19,7 @@ Run locally:  streamlit run app.py
 """
 from __future__ import annotations
 
+import json
 import queue
 import threading
 from datetime import date
@@ -21,10 +29,15 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 import config
+import dalal_probe
 import pipeline
 from errors import ConfigError, FilingError
 
 st.set_page_config(page_title="Equity Growth Analyst", layout="wide")
+
+# Notices that are out of date now that the scorer is real. Hidden here only;
+# config.validate_config() still returns them (test_step1.py expects that).
+STALE_NOTICE_PREFIXES = ("Component weights are not set",)
 
 
 @st.cache_resource(show_spinner=False)
@@ -258,6 +271,36 @@ def render_filings_panel() -> None:
                 st.rerun()
 
 
+def render_diagnostics_panel() -> None:
+    st.subheader("Diagnostics")
+    st.caption("Read-only. Shows what the dalal package really has and what it returns. "
+               "It changes no score, record or report.")
+    raw = st.text_input("Ticker", key="diag_ticker", placeholder="for example BAJAJ-AUTO")
+    if st.button("Run dalal probe"):
+        tickers, rejected = pipeline.normalise_tickers(raw, 1) if raw.strip() else ([], [])
+        if not tickers:
+            st.error("Enter one valid ticker first.")
+        else:
+            with st.spinner("Asking dalal (this can take 10 to 40 seconds)..."):
+                st.session_state["diag_result"] = dalal_probe.probe(tickers[0])
+
+    result = st.session_state.get("diag_result")
+    if not result:
+        return
+    if not result.get("installed"):
+        st.error(result.get("note", "dalal is not installed"))
+        return
+    st.text(f"dalal version: {result.get('version')} | ticker: {result.get('ticker')} | "
+            f"scrip code: {result.get('scrip_code') or 'not found'}")
+    with st.expander("Functions dalal really has"):
+        st.code("\n".join(f"{f['name']}{f['signature']}" for f in result["functions"]) or "none")
+    for call in result["calls"]:
+        mark = "OK" if call.get("ok") else "FAILED"
+        with st.expander(f"{mark}: {call['label']}", expanded=call["label"].startswith("shareholding(")):
+            st.code(json.dumps(call.get("result") or {"error": call.get("error")},
+                               indent=2, default=str, ensure_ascii=False))
+
+
 def render_run_panel(horizon: int) -> None:
     raw = st.text_area(
         f"Tickers (1 to {config.GUI_MAX_TICKERS}, separated by commas or new lines)",
@@ -308,6 +351,8 @@ def main() -> None:
         st.error(f"Configuration error: {exc}")
         st.stop()
     for note in notices:
+        if note.startswith(STALE_NOTICE_PREFIXES):
+            continue  # out of date: the scorer is real now
         st.info(note)
 
     with st.sidebar:
@@ -325,13 +370,16 @@ def main() -> None:
             st.caption("Stored analyses: unavailable")
         st.caption(f"Code {config.CODE_VERSION} | spec {config.SPEC_VERSION}")
 
-    tab_run, tab_files, tab_saved = st.tabs(["Run analysis", "Filings", "Saved analyses"])
+    tab_run, tab_files, tab_saved, tab_diag = st.tabs(
+        ["Run analysis", "Filings", "Saved analyses", "Diagnostics"])
     with tab_run:
         render_run_panel(horizon)
     with tab_files:
         render_filings_panel()
     with tab_saved:
         render_saved_panel()
+    with tab_diag:
+        render_diagnostics_panel()
 
 
 main()
