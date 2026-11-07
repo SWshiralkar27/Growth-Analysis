@@ -1,6 +1,6 @@
 """
 config.py
-Version: Step 9, v0.9.0 (2026-11-05). Code version 2026-11-step9.
+Version: Step 11a, v0.11.0 (2026-11-07). Code version 2026-11-step11a.
 Spec: README v3.1 DRAFT (v2.0 is binding where it differs).
 
 Purpose: constants, paths, versions, secret lookup, start-up checks.
@@ -11,7 +11,11 @@ Rules:
   - Anything marked [FILL FROM v2.0] must be copied from README v2.0,
     never guessed.
   - No scoring weight, cap or threshold is set in this step.
-PROMPT_VERSION: no prompt exists yet, so no bump is needed. Set it at step 5.
+Changes in v0.11.0 (Step 11a): added the manual-input settings (MANUAL_FIELDS,
+MANUAL_INPUT_MAX_AGE_DAYS, MANUAL_SOURCE_*) and added "manual_inputs/" to
+PERSIST_PREFIXES so saved inputs and their source documents can be backed up.
+Everything else is unchanged.
+PROMPT_VERSION: unchanged (2026-11-v3). No bump needed.
 """
 from __future__ import annotations
 
@@ -22,7 +26,7 @@ from pathlib import Path
 from errors import ConfigError
 
 # ---------------------------------------------------------------- versions
-CODE_VERSION = "2026-11-step9"
+CODE_VERSION = "2026-11-step11a"
 SPEC_VERSION = "v3.1-draft"
 PROMPT_VERSION = "2026-11-v3"  # bump whenever the prompt, JSON schema or scoring changes (v2.0 used 2026-10-v2)
 SCHEMA_VERSION = 1
@@ -107,89 +111,11 @@ CONTEXT_GOVERNANCE_SHARE = 0.30     # share of the budget reserved for governanc
 CONTEXT_BUSINESS_SHARE = 0.45       # share reserved for growth pages (plus unused governance share)
 
 # What gets mirrored to the private data repository (paths relative to DATA_DIR).
-PERSIST_PREFIXES = ("store/", "filings/")
+# Step 11a: "manual_inputs/" added (saved manual values and their source documents).
+PERSIST_PREFIXES = ("store/", "filings/", "manual_inputs/")
 PERSIST_TREE_CACHE_SECONDS = 30
 
 # Largest filing the upload box accepts (approved 2026-11-03).
 MAX_UPLOAD_MB = 50
 
-# ---------------------------------------------------------------- statuses
-STATUS_OK = "ok"
-STATUS_STALE = "stale"
-STATUS_PARTIAL = "partial"
-STATUS_FAILED = "failed"
-
-# ----------------------------------------------------------------- scoring
-# APPROVED: long-term vs short-term weighting of 55 to 45.
-LONG_TERM_POINTS = 55
-SHORT_TERM_POINTS = 45
-
-# component name -> (block, points), block is "long" or "short".
-# Deliberately EMPTY: weights are not approved (OD-1, OD-17) and README v2.0
-# values are not available. score_card.py (step 3) fills this once approved.
-COMPONENT_WEIGHTS: dict[str, tuple[str, float]] = {}
-
-# v2.1 scorer settings (score_card.py reads these; see its _DEFAULTS).
-SCORE_PARAMS: dict = {}  # empty = use the recovered v2.1 defaults unchanged
-# Cap applied when governance was never actually checked. Value 69 is stated in the
-# README v2.0 text in the project files (section 3.3) and was approved by the owner on
-# 2026-11-03. It sits just under the 70 needed for "Good Candidate". None would switch it off.
-UNVERIFIED_GOVERNANCE_CAP = 69
-
-# ---------------------------------------------------------------- secrets
-# Logical name -> environment variable name. [FILL FROM v2.0]
-SECRET_ENV_NAMES = {
-    "gemini_api_key": "GEMINI_API_KEY",
-    # Permanent storage in a private GitHub repository (step 6). All three are optional;
-    # without the repo and the token the app simply stays temporary.
-    "github_data_repo": "GITHUB_DATA_REPO",      # for example  yourname/Growth-Analysis-Data
-    "github_data_token": "GITHUB_DATA_TOKEN",    # fine-grained token, Contents read and write, that repo only
-    "github_data_branch": "GITHUB_DATA_BRANCH",  # default main
-}
-
-
-def get_secret(key: str) -> str | None:
-    """Return a secret from the environment, or None. Never log the value."""
-    env_name = SECRET_ENV_NAMES.get(key)
-    value = os.environ.get(env_name) if env_name else None
-    return value or None
-
-
-def has_secret(key: str) -> bool:
-    return get_secret(key) is not None
-
-
-# ------------------------------------------------------- start-up checks
-def validate_config() -> list[str]:
-    """Fail loudly on a broken split or weights; return non-fatal notices.
-
-    Raises ConfigError if the 55/45 split is broken or if weights are set but
-    do not sum to 55 (long) and 45 (short).
-    """
-    notices: list[str] = []
-
-    if (LONG_TERM_POINTS, SHORT_TERM_POINTS) != (55, 45) \
-            or LONG_TERM_POINTS + SHORT_TERM_POINTS != 100:
-        raise ConfigError(
-            f"Score split must be 55/45 and total 100; got "
-            f"{LONG_TERM_POINTS}/{SHORT_TERM_POINTS}."
-        )
-
-    if not COMPONENT_WEIGHTS:
-        notices.append(
-            "Component weights are not set (awaiting owner approval and "
-            "README v2.0). Scoring is stubbed and no total is produced."
-        )
-        return notices
-
-    long_sum = sum(p for block, p in COMPONENT_WEIGHTS.values() if block == "long")
-    short_sum = sum(p for block, p in COMPONENT_WEIGHTS.values() if block == "short")
-    unknown = {b for b, _ in COMPONENT_WEIGHTS.values()} - {"long", "short"}
-    if unknown:
-        raise ConfigError(f"Unknown weight block(s): {sorted(unknown)}")
-    if abs(long_sum - LONG_TERM_POINTS) > 1e-9 or abs(short_sum - SHORT_TERM_POINTS) > 1e-9:
-        raise ConfigError(
-            f"Weights must sum to {LONG_TERM_POINTS} (long) and "
-            f"{SHORT_TERM_POINTS} (short); got {long_sum} and {short_sum}."
-        )
-    return notices
+# ------------------------------------------------------ manual
