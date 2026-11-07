@@ -1,6 +1,7 @@
 """
 test_manual_inputs_stage.py
-Version: Step 11c, v0.11.2 (2026-11-07).
+Version: Step 12, v0.12.0 (2026-11-07). Step 12 change: the old test that said saved values do
+not change the score is replaced by two tests for the new behaviour; every other test is unchanged.
 Tests for the real manual_inputs pipeline stage and the text lines the Details panel shows.
 Every test writes into a temporary folder; no network needed.
 Run:  python -m unittest discover -s . -p "test_*.py" -v
@@ -79,14 +80,28 @@ class RunTests(StageCase):
         self.assertNotIn("manual_inputs", run.results[0].stubbed_stages)
         self.assertIn("indicators", run.results[0].stubbed_stages)
 
-    def test_saved_values_appear_in_the_result_but_do_not_change_the_score(self):
+    def test_saved_values_appear_in_the_result_and_a_fresh_pledge_lowers_the_score(self):
+        # Step 12: the pledge now counts. FII alone does not (FII and DII must both be fresh).
         before = pipeline.run_pipeline(["FAKE"], 30).results[0]
         self.save("promoter_pledge_pct", "40")
         self.save("fii_holding_change", "5")
         after = pipeline.run_pipeline(["FAKE"], 30).results[0]
         self.assertEqual(after.manual_inputs["values"], {"promoter_pledge_pct": 40.0, "fii_holding_change": 5.0})
-        self.assertEqual(after.breakdown.total, before.breakdown.total)
+        # a pledge of 40 costs min(20, 40 x 0.5) = 20 points
+        self.assertAlmostEqual(before.breakdown.total - after.breakdown.total, 20.0, places=1)
+        self.assertTrue(any("promoter pledge 40%" in s for s in after.breakdown.labels))
+        self.assertTrue(any("both must be fresh" in s for s in after.breakdown.labels))
         self.assertEqual(after.status, "ok")
+
+    def test_blank_and_expired_values_do_not_change_the_score(self):
+        before = pipeline.run_pipeline(["FAKE"], 30).results[0]
+        self.save("promoter_pledge_pct", "40", days_ago=config.MANUAL_INPUT_MAX_AGE_DAYS + 5)
+        self.save("fii_holding_change", None, blank=True)
+        after = pipeline.run_pipeline(["FAKE"], 30).results[0]
+        self.assertEqual(after.manual_inputs["values"], {})
+        self.assertEqual(after.breakdown.total, before.breakdown.total)
+        self.assertTrue(any(f"older than {config.MANUAL_INPUT_MAX_AGE_DAYS} days" in s
+                            for s in after.breakdown.labels))
 
     def test_a_damaged_manual_file_does_not_downgrade_the_run(self):
         store = pipeline.default_manual_store()
