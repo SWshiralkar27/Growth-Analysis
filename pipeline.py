@@ -1,11 +1,14 @@
 """
 pipeline.py
-Version: Step 11b, v0.11.1 (2026-11-07). Code version 2026-11-step11b.
+Version: Step 11c, v0.11.2 (2026-11-07). Code version 2026-11-step11c.
 Spec: README v3.1 DRAFT, sections 4, 5, 8 and 10.
 
 Step 11b: added the manual-input helpers (manual_status, save_manual_input,
 ensure_local_manual_inputs) and made restore_from_backup also bring back manual_inputs/.
-The manual_inputs pipeline stage is still a stub (it reads the saved values in step 11c).
+Step 11c: the manual_inputs stage is now real. It reads the saved manual values from the local
+store (no network), keeps only fresh, non-blank ones in "values", and records every field's
+status in the ticker result so the details panel can show them. The score stage still ignores
+them: using them in the score needs an approved scoring change.
 
 Purpose: the orchestrator. Sequences the per-ticker stages, handles failures,
 ranks the results and returns plain data. It contains no scoring maths, no
@@ -101,6 +104,7 @@ class TickerResult:
     unreadable: list = field(default_factory=list)  # [name, reason] for filings that could not be read
     financials: dict = field(default_factory=dict)  # the data used (for the report and details view)
     analysis: Optional[dict] = None                 # the AI analysis used (fresh or the prior one)
+    manual_inputs: dict = field(default_factory=dict)  # saved manual values seen by the run (shown, not scored)
     rank: Optional[int] = None
     schema_version: int = config.SCHEMA_VERSION
 
@@ -513,6 +517,61 @@ def save_manual_input(ticker: str, field: str, value: Any, as_of: Any, blank: bo
     return ManualSaveResult(entry, "backed up")
 
 
+def manual_inputs_stage(ticker: str, today=None) -> dict:
+    """Pipeline stage: the saved manual values for this ticker, read from the local store only.
+
+    Returns {"fields": {name: {status, blank, value, as_of}}, "values": {name: value}, "warning"}.
+    "values" holds only fresh, non-blank entries. A damaged or unreadable file is reported in
+    "warning" and the run carries on; this stage never makes a ticker partial or failed.
+    """
+    store = default_manual_store()
+    try:
+        entries = store.get(ticker)
+    except Exception as exc:  # StoreError for a damaged file, InputRejected for a bad ticker
+        return {"fields": {}, "values": {}, "warning": f"manual inputs not read: {type(exc).__name__}: {exc}"}
+    fields: dict = {}
+    values: dict = {}
+    for name in config.MANUAL_FIELDS:
+        entry = entries.get(name)
+        status = store.freshness(entry, today)
+        fields[name] = {"status": status,
+                        "blank": bool(entry is not None and entry.value is None),
+                        "value": entry.value if entry is not None else None,
+                        "as_of": entry.as_of if entry is not None else None}
+        if status == "fresh" and entry is not None and entry.value is not None:
+            values[name] = entry.value
+    return {"fields": fields, "values": values, "warning": None}
+
+
+def manual_summary_lines(result: "TickerResult") -> list:
+    """Plain text lines for the details panel, one per manual field (in config order)."""
+    summary = getattr(result, "manual_inputs", None) or {}
+    lines = []
+    if summary.get("warning"):
+        lines.append(str(summary["warning"]))
+    fields = summary.get("fields") or {}
+    if not fields:
+        if not lines:
+            lines.append("Not read (the run stopped before this step)")
+        return lines
+    limit = config.MANUAL_INPUT_MAX_AGE_DAYS
+    for name, spec in config.MANUAL_FIELDS.items():
+        f = fields.get(name) or {}
+        label = spec["label"]
+        status, as_of = f.get("status", "missing"), f.get("as_of")
+        if status == "missing":
+            lines.append(f"{label}: not entered")
+        elif status == "stale":
+            what = "blank" if f.get("blank") else f"{f.get('value'):g}" if isinstance(f.get("value"), float) else str(f.get("value"))
+            lines.append(f"{label}: {what}, last as of {as_of}; older than {limit} days, not used")
+        elif f.get("blank"):
+            lines.append(f"{label}: left blank (as of {as_of})")
+        else:
+            v = f.get("value")
+            lines.append(f"{label}: {v:g}" + f" (as of {as_of})" if isinstance(v, float) else f"{label}: {v} (as of {as_of})")
+    return lines
+
+
 # ----------------------------------------------------------------- reports
 def _legacy_breakdown(b: dict) -> dict:
     """Rebuild the v2.1 scorer's breakdown dict (what report_generator reads) from a saved
@@ -678,10 +737,6 @@ def make_stub_stages(store: Any = None, analyse_fn: Any = None,
     def indicators(price_history: dict) -> dict:
         return {"stub": True}
 
-    @_stub
-    def manual_inputs(ticker: str) -> dict:
-        return {}
-
     def stub_analyse(ticker: str, context: dict, financials: dict) -> dict:
         if ticker in SIM_TRANSIENT:
             raise TransientError("simulated 429 from the analyser")
@@ -712,7 +767,7 @@ def make_stub_stages(store: Any = None, analyse_fn: Any = None,
         backup = lambda ticker: backup_store_record(store, ticker)  # noqa: E731
 
     stages = Stages(
-        fetch=fetch, indicators=indicators, manual_inputs=manual_inputs,
+        fetch=fetch, indicators=indicators, manual_inputs=manual_inputs_stage,
         filings_context=filings_context_stage, analyse=analyse, score=score_stage_v21,
         load_prior=load_prior, save=save, backup=backup,
     )
@@ -734,6 +789,7 @@ def process_ticker(ticker: str, horizon_days: int, stages: Stages,
     unreadable_files: list = []
     financials: dict = {}
     analysis: Optional[dict] = None
+    manual_summary: dict = {}
 
     def notify(stage: str, state: str) -> None:
         if on_progress is None:
@@ -770,7 +826,8 @@ def process_ticker(ticker: str, horizon_days: int, stages: Stages,
                             stage_errors=errors, breakdown=None,
                             stubbed_stages=stubbed, prior_used=prior_used,
                             documents=documents_read, unreadable=unreadable_files,
-                            financials=financials, analysis=analysis)
+                            financials=financials, analysis=analysis,
+                            manual_inputs=manual_summary)
 
     # 1. fetch: without data nothing else can run
     fetched, err = run("fetch", stages.fetch, ticker)
@@ -792,6 +849,7 @@ def process_ticker(ticker: str, horizon_days: int, stages: Stages,
     if err:
         manual = {}
         status = _downgrade(status, config.STATUS_PARTIAL)
+    manual_summary = manual if isinstance(manual, dict) else {}
 
     # 4. filings context
     context, ctx_err = run("filings_context", stages.filings_context, ticker)
@@ -865,7 +923,8 @@ def process_ticker(ticker: str, horizon_days: int, stages: Stages,
     return TickerResult(ticker=ticker, status=status, stage_errors=errors,
                         breakdown=breakdown, stubbed_stages=stubbed,
                         prior_used=prior_used, documents=documents_read,
-                        unreadable=unreadable_files, financials=financials, analysis=analysis)
+                        unreadable=unreadable_files, financials=financials, analysis=analysis,
+                        manual_inputs=manual_summary)
 
 
 # ----------------------------------------------------------------- ranking
