@@ -1,6 +1,6 @@
 """
 app.py
-Version: Step 11b, v0.11.1 (2026-11-07). Code version 2026-11-step11b.
+Version: Step 11c, v0.11.2 (2026-11-07). Code version 2026-11-step11c.
 Spec: README v3.1 DRAFT, sections 5.3, 8 and 13 (Streamlit replaces the desktop
 GUI; this is a spec change awaiting recording in v3.2).
 
@@ -17,6 +17,10 @@ Changes in v0.11.1 (Step 11b):
     confirm one field at a time, with an optional source document. All logic lives in
     pipeline.py; this file only shows it. Saved values are stored and shown only: the v2.1
     score does not read them yet.
+
+Changes in v0.11.2 (Step 11c):
+  - The per-ticker Details panel gets a "Manual inputs" part: each saved value with its as-of date,
+    and a note for stale, blank or missing ones. Display only; the score does not use them.
 
 Purpose: Streamlit front end. It collects tickers and a horizon, runs the
 pipeline in a worker thread and shows progress from the main thread. It holds
@@ -166,6 +170,9 @@ def render_details(result: pipeline.RunResult) -> None:
                 st.text("Governance feeds that answered: none")
             for w in notes["warnings"]:
                 st.caption(f"Warning: {w}")
+            st.markdown("**Manual inputs** (shown only, not used in the score)")
+            for line in pipeline.manual_summary_lines(r):
+                st.text(line)
             st.markdown("**Filings**")
             st.text("Read: " + (", ".join(notes["filings_read"]) or "none"))
             for name, reason in notes["filings_unreadable"]:
@@ -520,4 +527,3 @@ def main() -> None:
 
 
 main()
-
