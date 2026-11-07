@@ -1,7 +1,7 @@
 """
 app.py
-Version: Step 10d, v0.10.2 (2026-11-06). Code version 2026-11-step9 (config.py unchanged).
-Spec: README v3.1 DRAFT, sections 5.3 and 13 (Streamlit replaces the desktop
+Version: Step 11b, v0.11.1 (2026-11-07). Code version 2026-11-step11b.
+Spec: README v3.1 DRAFT, sections 5.3, 8 and 13 (Streamlit replaces the desktop
 GUI; this is a spec change awaiting recording in v3.2).
 
 Changes in v0.10.0:
@@ -9,10 +9,14 @@ Changes in v0.10.0:
     real now). config.validate_config() still returns it.
   - New read-only "Diagnostics" tab (dalal_probe).
 Changes in v0.10.2:
-  - Diagnostics tab gets a second read-only button, "Run Yahoo probe" (yf_probe), that shows
-    which period Yahoo's revenue growth describes and the statement rows behind OCF/EBITDA.
+  - Diagnostics tab gets a second read-only button, "Run Yahoo probe" (yf_probe).
   app.py imports the two probe modules directly because they are diagnostic tools, not
   engine stages. Neither touches any score, record or report.
+Changes in v0.11.1 (Step 11b):
+  - New "Inputs" tab: see the four manual fields for a ticker and their freshness, then enter or
+    confirm one field at a time, with an optional source document. All logic lives in
+    pipeline.py; this file only shows it. Saved values are stored and shown only: the v2.1
+    score does not read them yet.
 
 Purpose: Streamlit front end. It collects tickers and a horizon, runs the
 pipeline in a worker thread and shows progress from the main thread. It holds
@@ -35,7 +39,7 @@ import config
 import dalal_probe
 import pipeline
 import yf_probe
-from errors import ConfigError, FilingError
+from errors import ConfigError, FilingError, StoreError
 
 st.set_page_config(page_title="Equity Growth Analyst", layout="wide")
 
@@ -275,6 +279,94 @@ def render_filings_panel() -> None:
                 st.rerun()
 
 
+def _status_text(row: dict) -> str:
+    if row["status"] == "missing":
+        return "Not entered"
+    if row["status"] == "fresh":
+        return "Left blank (valid)" if row["blank"] else "Fresh"
+    return "Stale, please enter again"
+
+
+def _clear_inputs_form() -> None:
+    st.session_state["inputs_gen"] = st.session_state.get("inputs_gen", 0) + 1
+
+
+def render_inputs_panel() -> None:
+    st.subheader("Manual inputs")
+    st.caption(
+        f"Values the free feeds cannot supply. Each saved value stays valid for "
+        f"{config.MANUAL_INPUT_MAX_AGE_DAYS} days from its as-of date. They are stored and shown here "
+        f"only: the v2.1 score does not use them yet."
+    )
+    if pipeline.storage_status()["enabled"]:
+        st.info("Saved values and their documents are copied to your private data repository.")
+    else:
+        st.warning("Permanent storage is OFF: saved values disappear when the app restarts or redeploys.")
+
+    raw = st.text_input("Ticker", key="inputs_ticker", placeholder="for example BAJAJ-AUTO")
+    tickers, rejected = pipeline.normalise_tickers(raw, 1) if raw.strip() else ([], [])
+    ticker = tickers[0] if tickers else None
+    if rejected and raw.strip():
+        st.error(f"{rejected[0][0]}: {rejected[0][1]}")
+
+    msg = st.session_state.pop("inputs_msg", None)
+    if msg:
+        getattr(st, msg[0])(msg[1])
+    if not ticker:
+        return
+
+    pipeline.ensure_local_manual_inputs()
+    try:
+        rows = pipeline.manual_status(ticker)
+    except (StoreError, pipeline.InputRejected) as exc:
+        st.error(str(exc))
+        return
+
+    st.markdown(f"**Saved inputs for {ticker}**")
+    table = pd.DataFrame([{
+        "Field": r["label"],
+        "Value": ("(blank)" if r["blank"] else ("" if r["value"] is None else r["value"])),
+        "As of": r["as_of"] or "",
+        "Status": _status_text(r),
+        "Source document": r["source_file"] or "",
+    } for r in rows]).astype(str)
+    st.dataframe(table, use_container_width=True, hide_index=True)
+
+    st.markdown("**Enter or update one field**")
+    gen = st.session_state.get("inputs_gen", 0)
+    labels = {r["label"]: r for r in rows}
+    choice = st.selectbox("Field", list(labels), key=f"in_field_{gen}")
+    row = labels[choice]
+    blank = st.checkbox("Leave blank (record that this is not available)", key=f"in_blank_{gen}")
+    if row["kind"] == "date":
+        value_text = st.text_input("Date (YYYY-MM-DD)", key=f"in_val_{gen}", disabled=blank,
+                                   placeholder="for example 2026-12-15")
+    else:
+        value_text = st.text_input("Value (a number)", key=f"in_val_{gen}", disabled=blank)
+    as_of = st.date_input("As of (the date this value refers to)", value=date.today(),
+                          max_value=date.today(), key=f"in_asof_{gen}")
+    allowed = [ext.lstrip(".") for ext in config.MANUAL_SOURCE_EXTENSIONS]
+    upload = st.file_uploader(
+        f"Source document (optional, up to {config.MANUAL_SOURCE_MAX_MB:g} MB)", type=allowed,
+        key=f"in_src_{gen}")
+
+    if st.button("Save input", type="primary", key=f"in_save_{gen}"):
+        try:
+            result = pipeline.save_manual_input(
+                ticker, row["field"], None if blank else value_text, as_of, blank=blank,
+                source_name=upload.name if upload is not None else None,
+                source_bytes=upload.getvalue() if upload is not None else None)
+            note = f" {result.backup_note.capitalize()}." if result.backup_note else ""
+            kind = "warning" if result.backup_note.startswith("not backed up") else "success"
+            st.session_state["inputs_msg"] = (kind, f"Saved {row['label']} for {ticker}.{note}")
+            _clear_inputs_form()
+        except pipeline.InputRejected as exc:
+            st.session_state["inputs_msg"] = ("error", f"Not saved: {exc}")
+        except StoreError as exc:
+            st.session_state["inputs_msg"] = ("error", f"Not saved: {exc}")
+        st.rerun()
+
+
 def _diag_ticker(raw: str):
     tickers, _ = pipeline.normalise_tickers(raw, 1) if raw.strip() else ([], [])
     return tickers[0] if tickers else None
@@ -413,12 +505,14 @@ def main() -> None:
             st.caption("Stored analyses: unavailable")
         st.caption(f"Code {config.CODE_VERSION} | spec {config.SPEC_VERSION}")
 
-    tab_run, tab_files, tab_saved, tab_diag = st.tabs(
-        ["Run analysis", "Filings", "Saved analyses", "Diagnostics"])
+    tab_run, tab_files, tab_inputs, tab_saved, tab_diag = st.tabs(
+        ["Run analysis", "Filings", "Inputs", "Saved analyses", "Diagnostics"])
     with tab_run:
         render_run_panel(horizon)
     with tab_files:
         render_filings_panel()
+    with tab_inputs:
+        render_inputs_panel()
     with tab_saved:
         render_saved_panel()
     with tab_diag:
@@ -426,3 +520,4 @@ def main() -> None:
 
 
 main()
+

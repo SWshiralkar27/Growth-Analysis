@@ -1,6 +1,6 @@
 """
 config.py
-Version: Step 11a, v0.11.0 (2026-11-07). Code version 2026-11-step11a.
+Version: Step 11b, v0.11.1 (2026-11-07). Code version 2026-11-step11b.
 Spec: README v3.1 DRAFT (v2.0 is binding where it differs).
 
 Purpose: constants, paths, versions, secret lookup, start-up checks.
@@ -14,7 +14,7 @@ Rules:
 Changes in v0.11.0 (Step 11a): added the manual-input settings (MANUAL_FIELDS,
 MANUAL_INPUT_MAX_AGE_DAYS, MANUAL_SOURCE_*) and added "manual_inputs/" to
 PERSIST_PREFIXES so saved inputs and their source documents can be backed up.
-Everything else is unchanged.
+Changes in v0.11.1 (Step 11b): only CODE_VERSION changed (2026-11-step11b).
 PROMPT_VERSION: unchanged (2026-11-v3). No bump needed.
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ from pathlib import Path
 from errors import ConfigError
 
 # ---------------------------------------------------------------- versions
-CODE_VERSION = "2026-11-step11a"
+CODE_VERSION = "2026-11-step11b"
 SPEC_VERSION = "v3.1-draft"
 PROMPT_VERSION = "2026-11-v3"  # bump whenever the prompt, JSON schema or scoring changes (v2.0 used 2026-10-v2)
 SCHEMA_VERSION = 1
@@ -146,7 +146,7 @@ MANUAL_FIELDS = {
     },
 }
 
-# ----------------------------------------------------------------- statuses
+# ---------------------------------------------------------------- statuses
 STATUS_OK = "ok"
 STATUS_STALE = "stale"
 STATUS_PARTIAL = "partial"
@@ -226,3 +226,4 @@ def validate_config() -> list[str]:
             f"{SHORT_TERM_POINTS} (short); got {long_sum} and {short_sum}."
         )
     return notices
+

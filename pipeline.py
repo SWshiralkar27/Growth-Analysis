@@ -1,7 +1,11 @@
 """
 pipeline.py
-Version: Step 9, v0.9.0 (2026-11-05). Code version 2026-11-step9.
-Spec: README v3.1 DRAFT, sections 4, 5 and 10.
+Version: Step 11b, v0.11.1 (2026-11-07). Code version 2026-11-step11b.
+Spec: README v3.1 DRAFT, sections 4, 5, 8 and 10.
+
+Step 11b: added the manual-input helpers (manual_status, save_manual_input,
+ensure_local_manual_inputs) and made restore_from_backup also bring back manual_inputs/.
+The manual_inputs pipeline stage is still a stub (it reads the saved values in step 11c).
 
 Purpose: the orchestrator. Sequences the per-ticker stages, handles failures,
 ranks the results and returns plain data. It contains no scoring maths, no
@@ -43,6 +47,7 @@ import config
 import data_fetch
 import filings
 import gemini_analyser
+import manual_inputs_store
 import pdf_extractor
 import persistence
 import report_generator
@@ -389,7 +394,7 @@ def restore_from_backup():
     if mirror is None:
         return None
     try:
-        return mirror.pull_missing(("store/",))
+        return mirror.pull_missing(("store/", "manual_inputs/"))
     except Exception as exc:
         return persistence.PullResult(errors=[f"{type(exc).__name__}: {exc}"])
 
@@ -434,6 +439,78 @@ def delete_filing(ticker: str, name: str) -> bool:
 def backup_store_record(store, ticker: str):
     """Backup stage for the real file store: copy the ticker's record."""
     return push_local(store.path_for(ticker))
+
+
+# ------------------------------------------------------------ manual inputs
+InputRejected = manual_inputs_store.InputRejected
+
+
+@dataclass
+class ManualSaveResult:
+    entry: Any                 # the saved manual_inputs_store.ManualInput
+    backup_note: str = ""      # "", "backed up" or "not backed up: <reason>"
+
+
+def default_manual_store() -> manual_inputs_store.ManualInputStore:
+    """The real file-backed store for manual inputs (step 11a)."""
+    return manual_inputs_store.ManualInputStore(config.MANUAL_INPUTS_DIR)
+
+
+def ensure_local_manual_inputs() -> None:
+    """Fetch backed-up manual inputs and their source documents that are missing locally.
+    Never raises; local files are never overwritten."""
+    mirror = get_mirror()
+    if mirror is None:
+        return
+    try:
+        mirror.pull_missing(("manual_inputs/",))
+    except Exception:
+        pass
+
+
+def manual_status(ticker: str, today=None) -> list:
+    """One plain row per manual field for the Inputs tab.
+
+    Keys: field, label, kind, value (None when missing or blank), blank (bool), as_of,
+    source_file, status ("missing", "fresh" or "stale"). May raise StoreError (damaged file) or
+    InputRejected (invalid ticker); the caller shows the message.
+    """
+    store = default_manual_store()
+    entries = store.get(ticker)
+    rows = []
+    for name, spec in config.MANUAL_FIELDS.items():
+        entry = entries.get(name)
+        rows.append({
+            "field": name, "label": spec["label"], "kind": spec["kind"],
+            "value": entry.value if entry else None,
+            "blank": bool(entry is not None and entry.value is None),
+            "as_of": entry.as_of if entry else None,
+            "source_file": entry.source_file if entry else None,
+            "status": store.freshness(entry, today),
+        })
+    return rows
+
+
+def save_manual_input(ticker: str, field: str, value: Any, as_of: Any, blank: bool = False,
+                      source_name: Optional[str] = None, source_bytes: Optional[bytes] = None,
+                      today=None) -> ManualSaveResult:
+    """Save one manual input (and its source document) locally, then copy them to permanent storage.
+
+    Raises InputRejected (nothing changed) or StoreError. A failed copy never undoes the save:
+    the result's backup_note says "not backed up: ..." instead.
+    """
+    store = default_manual_store()
+    entry = store.save(ticker, field, value, as_of, blank=blank, source_name=source_name,
+                       source_bytes=source_bytes, today=today)
+    results = [push_local(store.path_for(ticker))]
+    if entry.source_file:
+        results.append(push_local(store.sources_dir / entry.source_file))
+    failed = [r for r in results if r is not None and not r.ok]
+    if failed:
+        return ManualSaveResult(entry, f"not backed up: {failed[0].message}")
+    if all(r is None for r in results):
+        return ManualSaveResult(entry, "")
+    return ManualSaveResult(entry, "backed up")
 
 
 # ----------------------------------------------------------------- reports
@@ -857,3 +934,4 @@ if __name__ == "__main__":
     print()
     for row in demo.to_rows():
         print(row)
+
