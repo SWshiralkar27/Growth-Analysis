@@ -1,14 +1,19 @@
 """
 pipeline.py
-Version: Step 11c, v0.11.2 (2026-11-07). Code version 2026-11-step11c.
+Version: Step 12, v0.12.0 (2026-11-07). Code version 2026-11-step12.
 Spec: README v3.1 DRAFT, sections 4, 5, 8 and 10.
 
 Step 11b: added the manual-input helpers (manual_status, save_manual_input,
 ensure_local_manual_inputs) and made restore_from_backup also bring back manual_inputs/.
 Step 11c: the manual_inputs stage is now real. It reads the saved manual values from the local
 store (no network), keeps only fresh, non-blank ones in "values", and records every field's
-status in the ticker result so the details panel can show them. The score stage still ignores
-them: using them in the score needs an approved scoring change.
+status in the ticker result so the details panel can show them.
+Step 12: the score stage now uses them (approved 2026-11-07). A fresh, non-blank promoter pledge
+feeds the scorer's existing pledge penalty; FII and DII holding changes, only when BOTH are fresh,
+are summed into the scorer's existing institutional-holding signal. score_card.py is unchanged, so
+no weight, cap or threshold changed; the 69 cap is not lifted by a manual pledge. The saved record
+keeps the raw fetched financials; the manual values are applied to a copy used only for scoring.
+PROMPT_VERSION: unchanged (the prompt, schema and Gemini input are the same).
 
 Purpose: the orchestrator. Sequences the per-ticker stages, handles failures,
 ranks the results and returns plain data. It contains no scoring maths, no
@@ -104,7 +109,7 @@ class TickerResult:
     unreadable: list = field(default_factory=list)  # [name, reason] for filings that could not be read
     financials: dict = field(default_factory=dict)  # the data used (for the report and details view)
     analysis: Optional[dict] = None                 # the AI analysis used (fresh or the prior one)
-    manual_inputs: dict = field(default_factory=dict)  # saved manual values seen by the run (shown, not scored)
+    manual_inputs: dict = field(default_factory=dict)  # saved manual values seen by the run (shown; pledge and FII+DII are scored since step 12)
     rank: Optional[int] = None
     schema_version: int = config.SCHEMA_VERSION
 
@@ -249,6 +254,70 @@ def make_real_analyse(generate_fn=None, limiter=None, sleep=time.sleep, cache_di
     return analyse
 
 
+def _manual_num(v: Any) -> Optional[float]:
+    """A finite number from a manual value, or None (booleans and text are not numbers)."""
+    if v is None or isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    f = float(v)
+    return None if f != f or f in (float("inf"), float("-inf")) else f
+
+
+def apply_manual_inputs(financials: Optional[dict], manual: Any) -> tuple[dict, list]:
+    """Return (financials copy for scoring, labels) with the saved manual values applied.
+
+    Step 12. Rules (approved 2026-11-07):
+      - promoter_pledge_pct (fresh, non-blank) fills the scorer's pledge key. The scorer's own
+        penalty applies (above 10 percent). A manual value replaces a fetched one.
+      - fii_holding_change + dii_holding_change fill institutional_holding_change (percentage
+        points), only when BOTH are fresh and non-blank. One alone is not counted.
+      - Blank, missing or older-than-limit values change nothing. An expired value is named in a
+        label so a lapsed pledge does not silently raise the score.
+      - next_result_date is not scored.
+    The input dict is never changed; with no usable manual values the copy equals the input.
+    """
+    fin = dict(financials or {})
+    labels: list = []
+    summary = manual if isinstance(manual, dict) else {}
+    values = summary.get("values") or {}
+    fields = summary.get("fields") or {}
+    limit = config.MANUAL_INPUT_MAX_AGE_DAYS
+
+    def as_of(name: str) -> str:
+        return str((fields.get(name) or {}).get("as_of") or "date not recorded")
+
+    def expired(name: str) -> bool:
+        f = fields.get(name) or {}
+        return f.get("status") == "stale" and not f.get("blank")
+
+    # promoter pledge
+    pledge = _manual_num(values.get("promoter_pledge_pct"))
+    if pledge is not None and 0.0 <= pledge <= 100.0:
+        fetched = _manual_num(fin.get("promoter_pledge_pct"))
+        fin["promoter_pledge_pct"] = pledge
+        text = f"Manual input counted: promoter pledge {pledge:g}% (as of {as_of('promoter_pledge_pct')})"
+        if fetched is not None and fetched != pledge:
+            text += f"; replaces fetched value {fetched:g}%"
+        labels.append(text)
+    elif expired("promoter_pledge_pct"):
+        labels.append(f"Manual promoter pledge is older than {limit} days (as of "
+                      f"{as_of('promoter_pledge_pct')}): not counted")
+
+    # institutional holding change = FII + DII, both required
+    fii = _manual_num(values.get("fii_holding_change"))
+    dii = _manual_num(values.get("dii_holding_change"))
+    if fii is not None and dii is not None:
+        total = fii + dii
+        fin["institutional_holding_change"] = total
+        labels.append(f"Manual input counted: institutional holding change {total:+g}pp "
+                      f"(FII {fii:+g} + DII {dii:+g}; as of {as_of('fii_holding_change')} "
+                      f"and {as_of('dii_holding_change')})")
+    elif fii is not None or dii is not None:
+        labels.append("Manual FII/DII not counted: both must be fresh and filled in")
+    elif expired("fii_holding_change") or expired("dii_holding_change"):
+        labels.append(f"Manual FII/DII is older than {limit} days: not counted")
+    return fin, labels
+
+
 def score_stage_v21(ticker, analysis, financials, indicators, manual,
                     horizon_days) -> ScoreBreakdown:
     """Score stage: runs the recovered v2.1 quality and governance scorer.
@@ -258,9 +327,11 @@ def score_stage_v21(ticker, analysis, financials, indicators, manual,
     Peers are not passed, so the valuation signal scores at the prior until a
     batch supplies peer statistics.
     """
-    result = score_card.compute_score(financials or {}, analysis or {}, peers=None)
+    scoring_fin, manual_labels = apply_manual_inputs(financials, manual)
+    result = score_card.compute_score(scoring_fin, analysis or {}, peers=None)
     bd = result["breakdown"]
     labels = [f"Quality and governance score, model {bd['scoring_model']} (0 to 100)"]
+    labels.extend(manual_labels)
     if analysis is None:
         labels.append("No LLM analysis: LLM component scored at the prior")
     fin = financials or {}

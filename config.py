@@ -1,6 +1,6 @@
 """
 config.py
-Version: Step 11c, v0.11.2 (2026-11-07). Code version 2026-11-step11c.
+Version: Step 12, v0.12.0 (2026-11-07). Code version 2026-11-step12.
 Spec: README v3.1 DRAFT (v2.0 is binding where it differs).
 
 Purpose: constants, paths, versions, secret lookup, start-up checks.
@@ -15,7 +15,8 @@ Changes in v0.11.0 (Step 11a): added the manual-input settings (MANUAL_FIELDS,
 MANUAL_INPUT_MAX_AGE_DAYS, MANUAL_SOURCE_*) and added "manual_inputs/" to
 PERSIST_PREFIXES so saved inputs and their source documents can be backed up.
 Changes in v0.11.1 and v0.11.2 (Steps 11b and 11c): only CODE_VERSION changed.
-PROMPT_VERSION: unchanged (2026-11-v3). No bump needed.
+Changes in v0.12.0 (Step 12): CODE_VERSION and the MANUAL_FIELDS comment only (the scorer now
+reads pledge and FII+DII via pipeline.py). PROMPT_VERSION: unchanged (2026-11-v3). No bump needed.
 """
 from __future__ import annotations
 
@@ -26,7 +27,7 @@ from pathlib import Path
 from errors import ConfigError
 
 # ---------------------------------------------------------------- versions
-CODE_VERSION = "2026-11-step11c"
+CODE_VERSION = "2026-11-step12"
 SPEC_VERSION = "v3.1-draft"
 PROMPT_VERSION = "2026-11-v3"  # bump whenever the prompt, JSON schema or scoring changes (v2.0 used 2026-10-v2)
 SCHEMA_VERSION = 1
@@ -125,8 +126,8 @@ MANUAL_INPUT_MAX_AGE_DAYS = 90
 MANUAL_SOURCE_MAX_MB = 10                                  # largest document attached to one input
 MANUAL_SOURCE_EXTENSIONS = (".pdf", ".png", ".jpg", ".jpeg", ".txt", ".csv")
 # field name -> how it is entered. kind is "number" (with min and max) or "date".
-# These fields are not available from the free feeds. They are stored and shown only for now:
-# the v2.1 scorer does not read them (that needs an approved scoring change).
+# These fields are not available from the free feeds. Since step 12 the pledge and the sum of the
+# FII and DII changes (both fresh) are counted by the v2.1 scorer; next_result_date is shown only.
 MANUAL_FIELDS = {
     "promoter_pledge_pct": {
         "label": "Promoter pledge (% of promoter shares pledged)",
