@@ -1,6 +1,6 @@
 """
 config.py
-Version: Step 12, v0.12.0 (2026-11-07). Code version 2026-11-step12.
+Version: Step B1, v0.13.0 (2026-11-08). Code version 2026-11-stepB1.
 Spec: README v3.1 DRAFT (v2.0 is binding where it differs).
 
 Purpose: constants, paths, versions, secret lookup, start-up checks.
@@ -17,6 +17,11 @@ PERSIST_PREFIXES so saved inputs and their source documents can be backed up.
 Changes in v0.11.1 and v0.11.2 (Steps 11b and 11c): only CODE_VERSION changed.
 Changes in v0.12.0 (Step 12): CODE_VERSION and the MANUAL_FIELDS comment only (the scorer now
 reads pledge and FII+DII via pipeline.py). PROMPT_VERSION: unchanged (2026-11-v3). No bump needed.
+Changes in v0.13.0 (Step B1): added the batch settings (ANALYSIS_MAX_AGE_DAYS, FINANCIAL_CHANGE_THRESHOLD_PCT,
+BATCH_MAX_CALLS_PER_RUN, BATCH_MAX_TOKENS_PER_RUN, MAX_CONSECUTIVE_FAILURES: the v2.0 values from
+README v3.3 section 10), BATCH_CHARS_PER_TOKEN, the batch paths, and "batch/" in PERSIST_PREFIXES so the
+tickers list, the failure counters and the run summaries can be backed up to the private repository.
+PROMPT_VERSION: unchanged (2026-11-v3). No bump needed.
 """
 from __future__ import annotations
 
@@ -27,7 +32,7 @@ from pathlib import Path
 from errors import ConfigError
 
 # ---------------------------------------------------------------- versions
-CODE_VERSION = "2026-11-step12"
+CODE_VERSION = "2026-11-stepB1"
 SPEC_VERSION = "v3.1-draft"
 PROMPT_VERSION = "2026-11-v3"  # bump whenever the prompt, JSON schema or scoring changes (v2.0 used 2026-10-v2)
 SCHEMA_VERSION = 1
@@ -48,12 +53,14 @@ MANUAL_INPUTS_DIR = DATA_DIR / "manual_inputs"
 MANUAL_SOURCES_DIR = MANUAL_INPUTS_DIR / "sources"
 EVENTS_DIR = DATA_DIR / "events"
 PENDING_DIR = DATA_DIR / "pending"
+BATCH_DIR = DATA_DIR / "batch"                      # tickers.csv, state.json (backed up)
+BATCH_RUNS_DIR = BATCH_DIR / "runs"                 # one summary file per run (backed up)
 REPORTS_GUI_DIR = REPORTS_DIR / "gui"
 REPORTS_BATCH_DIR = REPORTS_DIR / "batch"
 
 ALL_DIRS = (
     STORE_DIR, CACHE_DIR, FILINGS_DIR, MANUAL_INPUTS_DIR, MANUAL_SOURCES_DIR,
-    EVENTS_DIR, PENDING_DIR, REPORTS_GUI_DIR, REPORTS_BATCH_DIR,
+    EVENTS_DIR, PENDING_DIR, BATCH_DIR, BATCH_RUNS_DIR, REPORTS_GUI_DIR, REPORTS_BATCH_DIR,
 )
 
 
@@ -113,7 +120,8 @@ CONTEXT_BUSINESS_SHARE = 0.45       # share reserved for growth pages (plus unus
 
 # What gets mirrored to the private data repository (paths relative to DATA_DIR).
 # Step 11a: "manual_inputs/" added (saved manual values and their source documents).
-PERSIST_PREFIXES = ("store/", "filings/", "manual_inputs/")
+# Step B1: "batch/" added (tickers list, failure counters, run summaries).
+PERSIST_PREFIXES = ("store/", "filings/", "manual_inputs/", "batch/")
 PERSIST_TREE_CACHE_SECONDS = 30
 
 # Largest filing the upload box accepts (approved 2026-11-03).
@@ -146,6 +154,17 @@ MANUAL_FIELDS = {
         "kind": "date",
     },
 }
+
+# ---------------------------------------------------------- batch (step B1)
+# The first five are the README v2.0 configuration values (README v3.3 section 10).
+ANALYSIS_MAX_AGE_DAYS = 90            # an analysis older than this is re-run (matrix row "stale")
+FINANCIAL_CHANGE_THRESHOLD_PCT = 5.0  # drift above this marks the row "financials_only"
+BATCH_MAX_CALLS_PER_RUN = 200         # Gemini calls allowed in one batch run
+BATCH_MAX_TOKENS_PER_RUN = 1_500_000  # estimated tokens allowed in one batch run
+MAX_CONSECUTIVE_FAILURES = 3          # failed runs in a row before a ticker is skipped
+BATCH_CHARS_PER_TOKEN = 4             # [CONFIRM] implied by v2.0: 120,000 characters is about 30k tokens
+BATCH_TICKERS_FILE = BATCH_DIR / "tickers.csv"
+BATCH_STATE_FILE = BATCH_DIR / "state.json"
 
 # ---------------------------------------------------------------- statuses
 STATUS_OK = "ok"
