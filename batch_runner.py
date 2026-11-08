@@ -1,6 +1,6 @@
 """
 batch_runner.py
-Version: Step B2, v0.14.0 (2026-11-08). Code version 2026-11-stepB2.
+Version: Step B4, v0.15.0 (2026-11-08). Code version 2026-11-stepB4.
 Spec: README v3.3 DRAFT sections 1.1, 10 and 12.1 (the v2.0 batch decision matrix).
 
 Purpose: the overnight batch (about 90 tickers). Command line: python batch_runner.py [--limit N].
@@ -20,6 +20,12 @@ What is here
                            counts only, so the public Actions log never shows a ticker name.
   - run_batch / run_live   (Step B2) wrap the pipeline's analyse stage with the matrix decision,
                            spend the budget, update the counters and write the summary files.
+  - stop early (Step B4)   after config.BATCH_STOP_AFTER_QUOTA_ERRORS quota errors (HTTP 429) in a
+                           row, every remaining ticker that needs Gemini is deferred without a call.
+  - the queue (Step B4)    batch/queue.csv lists the deferred tickers for the next run. The owner can
+                           delete lines from it on GitHub. While it lists at least one ticker of the
+                           run, ONLY queued tickers may call Gemini; the others are "held" (no call).
+                           A missing or empty queue means no restriction.
 
 Rules taken from README v2.0 (binding): the six matrix rows, 90 days, 5 percent drift, 200 calls,
 1,500,000 tokens, 3 failures. Transient errors (429, 503) never count as failures.
@@ -43,6 +49,13 @@ Rules taken from README v2.0 (binding): the six matrix rows, 90 days, 5 percent 
      as its date the first time it is reused. The engine's own printed output is not shown in the
      public log; it is written to the private run log instead.
   8. (B2) Demo tickers (FAKE, STALE429, NOPRIOR429, FAILPERM) are ignored by the batch.
+  9. (B4) Only HTTP 429 or RESOURCE_EXHAUSTED counts as a quota error; any success resets the count;
+     other transient errors (for example 503) neither count nor stop the run. A ticker whose call hit a
+     quota error is "deferred". The queue file is rewritten every run with the deferred tickers in the
+     order they would run next. Queued tickers run first, in queue order. A queue entry that is not in
+     the run's ticker list is ignored; a queue with no usable entry restricts nothing.
+  10. (B4) Held tickers are not written to the next queue. Once the queue is empty they may call
+     Gemini again; to keep one out for good, remove it from batch/tickers.csv.
 """
 from __future__ import annotations
 
@@ -78,7 +91,7 @@ MATRIX_STATUSES = (DELTA, NO_RECORD, STALE, FINANCIALS_ONLY, GOVERNANCE_ONLY, FR
 GEMINI_CALL_STATUSES = frozenset({DELTA, NO_RECORD, STALE})
 
 # Result statuses a batch run reports per ticker. The first four are the pipeline's own statuses.
-RUN_STATUSES = ("ok", "stale", "partial", "failed", "deferred", "skipped")
+RUN_STATUSES = ("ok", "stale", "partial", "failed", "deferred", "skipped", "held")
 
 DRIFT_FIELDS = ("revenue_growth", "ebitda_margin", "return_on_equity", "debt_to_equity")
 STATE_SCHEMA_VERSION = 1
@@ -283,8 +296,9 @@ class Budget:
         self.tokens += max(0, int(tokens))
 
 
-def order_tickers(tickers: Iterable, records: Optional[dict] = None) -> list:
-    """Oldest analysis first; tickers with no stored analysis come first; file order breaks ties."""
+def order_tickers(tickers: Iterable, records: Optional[dict] = None, queue: Optional[Iterable] = None) -> list:
+    """Run order. Queued tickers first, in queue order (Step B4); then oldest analysis first, tickers
+    with no stored analysis before those with one, file order breaking ties."""
     records = records or {}
     listed = list(tickers)
 
@@ -292,7 +306,30 @@ def order_tickers(tickers: Iterable, records: Optional[dict] = None) -> list:
         made = analysis_date(records.get(item))
         return (made is not None, made or date.min)
 
-    return sorted(listed, key=key)   # sorted() is stable, so equal keys keep file order
+    ordered = sorted(listed, key=key)   # sorted() is stable, so equal keys keep file order
+    if not queue:
+        return ordered
+    present = set(listed)
+    first: list = []
+    for item in queue:
+        if item in present and item not in first:
+            first.append(item)
+    return first + [t for t in ordered if t not in first]
+
+
+def is_quota_error(exc: Any) -> bool:
+    """True for a Gemini quota error (HTTP 429 or RESOURCE_EXHAUSTED) in an error message."""
+    text = str(exc).upper()
+    return "429" in text or "RESOURCE_EXHAUSTED" in text
+
+
+QUEUE_HELP = ("# Tickers waiting for a Gemini analysis, in the order they will run.\n"
+              "# Delete a line to keep that ticker out of the next run, then commit the file.\n")
+
+
+def queue_csv(tickers: Iterable) -> str:
+    """The text of batch/queue.csv: help lines (ignored when read), a header and one ticker per line."""
+    return QUEUE_HELP + "ticker\n" + "".join(f"{t}\n" for t in tickers)
 
 
 # ------------------------------------------------------- failure counters
@@ -376,7 +413,8 @@ def clear_failures(state: dict, ticker: str) -> bool:
 
 # ------------------------------------------------------------ the summary
 def summary_counts(rows: Iterable, calls: int = 0, est_tokens: int = 0,
-                   max_calls: Optional[int] = None, max_tokens: Optional[int] = None) -> dict:
+                   max_calls: Optional[int] = None, max_tokens: Optional[int] = None,
+                   quota_errors: int = 0, stopped_early: bool = False, queued_next: int = 0) -> dict:
     """Counts only. Each row is a dict with "status" (a RUN_STATUSES value) and optionally "matrix"."""
     rows = list(rows)
     by_status = {s: 0 for s in RUN_STATUSES}
@@ -396,6 +434,9 @@ def summary_counts(rows: Iterable, calls: int = 0, est_tokens: int = 0,
         "est_tokens": int(est_tokens),
         "max_calls": config.BATCH_MAX_CALLS_PER_RUN if max_calls is None else int(max_calls),
         "max_tokens": config.BATCH_MAX_TOKENS_PER_RUN if max_tokens is None else int(max_tokens),
+        "quota_errors": int(quota_errors),
+        "stopped_early": bool(stopped_early),
+        "queued_next": int(queued_next),
     }
 
 
@@ -403,13 +444,21 @@ def public_log_lines(counts: dict) -> list:
     """Lines for the public Actions log: counts only, never a ticker name or a score."""
     status = counts.get("by_status", {})
     matrix = counts.get("by_matrix", {})
-    return [
+    lines = [
         f"Batch run: {counts.get('tickers', 0)} tickers",
         "Status: " + ", ".join(f"{s} {status.get(s, 0)}" for s in RUN_STATUSES),
         "Matrix: " + ", ".join(f"{m} {matrix.get(m, 0)}" for m in MATRIX_STATUSES),
         f"Gemini calls: {counts.get('gemini_calls', 0)} of {counts.get('max_calls', 0)}; "
         f"estimated tokens {counts.get('est_tokens', 0):,} of {counts.get('max_tokens', 0):,}",
     ]
+    if counts.get("stopped_early"):
+        lines.append(f"Stopped early: {counts.get('quota_errors', 0)} Gemini quota errors; "
+                     f"the remaining Gemini tickers were deferred")
+    elif counts.get("quota_errors"):
+        lines.append(f"Gemini quota errors: {counts.get('quota_errors', 0)}")
+    lines.append(f"Queue for the next run: {counts.get('queued_next', 0)} waiting, "
+                 f"{status.get('held', 0)} held back this run")
+    return lines
 
 
 # =====================================================================
@@ -424,12 +473,25 @@ def _reused_analysis(prior: dict) -> dict:
     return analysis
 
 
+@dataclass
+class RunTrack:
+    """What happened to each ticker's Gemini decision during one run (shared with the analyse stage)."""
+    decisions: dict = field(default_factory=dict)    # ticker -> Decision
+    deferred: list = field(default_factory=list)     # tickers waiting for the next run, in run order
+    held: list = field(default_factory=list)         # tickers kept out of Gemini because they are not queued
+    why: dict = field(default_factory=dict)          # ticker -> reason shown in the private summary
+    quota_errors: int = 0
+    consecutive: int = 0
+    halted: bool = False
+
+
 def make_batch_analyse(real_analyse: Callable, load_prior: Callable, budget: "Budget", today: date,
-                       now_fn: Callable, decisions: dict, deferred: set) -> Callable:
+                       now_fn: Callable, track: RunTrack, queue_set: Optional[set] = None,
+                       stop_after: Optional[int] = None) -> Callable:
     """The analyse stage for a batch run: pick the matrix row, then reuse the stored analysis (no
-    Gemini call) or call Gemini once. The decision of every ticker is written into `decisions`;
-    a ticker the budget cannot afford is added to `deferred` and raises TransientError, which the
-    pipeline turns into "keep the prior analysis, save nothing"."""
+    Gemini call) or call Gemini once. A ticker that cannot call Gemini (budget used up, the run
+    stopped early, or not in the queue) raises TransientError, which the pipeline turns into "keep
+    the prior analysis, save nothing"; `track` records which of those it was."""
     lock = threading.Lock()
 
     def analyse(ticker: str, context: Any, financials: Any) -> dict:
@@ -440,19 +502,45 @@ def make_batch_analyse(real_analyse: Callable, load_prior: Callable, budget: "Bu
         ctx = context if isinstance(context, dict) else {}
         decision = classify(prior, ctx.get("documents") or [], financials, today)
         with lock:
-            decisions[ticker] = decision
+            track.decisions[ticker] = decision
         if not decision.gemini_call:
             return _reused_analysis(prior)
+
+        if queue_set is not None and ticker not in queue_set:
+            with lock:
+                track.held.append(ticker)
+                track.why[ticker] = "not in batch/queue.csv: no Gemini call this run"
+            raise TransientError("held: not in the queue")
+
         estimate = estimate_tokens(len(ctx.get("text") or ""))
         with lock:
+            if track.halted:
+                track.deferred.append(ticker)
+                track.why[ticker] = "Gemini quota errors stopped this run: waiting for the next run"
+                raise TransientError("deferred: Gemini quota errors stopped the run")
             if not budget.can_afford(estimate):
-                deferred.add(ticker)
+                track.deferred.append(ticker)
+                track.why[ticker] = "the Gemini budget for this run is used up: waiting for the next run"
                 raise TransientError("deferred: the Gemini budget for this run is used up")
             budget.charge(estimate)
-        if decision.force_refresh:
-            result = real_analyse(ticker, ctx, financials, force_refresh=True)
-        else:
-            result = real_analyse(ticker, ctx, financials)
+
+        try:
+            if decision.force_refresh:
+                result = real_analyse(ticker, ctx, financials, force_refresh=True)
+            else:
+                result = real_analyse(ticker, ctx, financials)
+        except TransientError as exc:
+            if is_quota_error(exc):
+                with lock:
+                    track.quota_errors += 1
+                    track.consecutive += 1
+                    track.deferred.append(ticker)
+                    track.why[ticker] = "Gemini quota error: waiting for the next run"
+                    if stop_after and track.consecutive >= stop_after:
+                        track.halted = True
+            raise
+        with lock:
+            track.consecutive = 0
         analysis = dict(result)
         analysis["analysed_at"] = now_fn().isoformat()
         return analysis
@@ -466,6 +554,7 @@ class BatchResult:
     counts: dict
     state: dict
     warnings: list = field(default_factory=list)
+    queue: list = field(default_factory=list)
     run_date: str = ""
     started_at: str = ""
     finished_at: str = ""
@@ -475,7 +564,7 @@ class BatchResult:
         return json.dumps({
             "run_date": self.run_date, "started_at": self.started_at, "finished_at": self.finished_at,
             "code_version": config.CODE_VERSION, "prompt_version": config.PROMPT_VERSION,
-            "counts": self.counts, "warnings": self.warnings, "rows": self.rows,
+            "counts": self.counts, "warnings": self.warnings, "queue": self.queue, "rows": self.rows,
         }, indent=2, default=str)
 
     def ranked_csv(self) -> str:
@@ -488,6 +577,10 @@ class BatchResult:
                              r.get("total"), r.get("rating"), r.get("reason"), r.get("notes")])
         return out.getvalue()
 
+    def queue_csv(self) -> str:
+        """The text of batch/queue.csv for the next run: the deferred tickers, in run order."""
+        return queue_csv(self.queue)
+
     def public_lines(self) -> list:
         """Counts only: safe for the public Actions log."""
         lines = public_log_lines(self.counts)
@@ -499,16 +592,20 @@ class BatchResult:
 def run_batch(tickers: Iterable, state: dict, stages: "pipeline.Stages", real_analyse: Callable,
               budget: Optional[Budget] = None, today: Optional[date] = None,
               now_fn: Optional[Callable] = None, horizon_days: Optional[int] = None,
-              limit: Optional[int] = None, warnings: Optional[list] = None) -> BatchResult:
-    """Run the pipeline over the tickers with the batch decision matrix and budget.
+              limit: Optional[int] = None, warnings: Optional[list] = None,
+              queue: Optional[Iterable] = None, stop_after: Optional[int] = None) -> BatchResult:
+    """Run the pipeline over the tickers with the batch decision matrix, budget, queue and stop-early rule.
 
     `stages` carries everything except the analyse stage, which is wrapped here. `state` (the failure
     counters) is updated in place and also returned in the result. One failing ticker never stops the run.
+    `queue` is the owner's list from batch/queue.csv (None or empty: no restriction). While it names at
+    least one ticker of this run, only queued tickers may call Gemini; the rest are "held".
     """
     today = today or date.today()
     now_fn = now_fn or (lambda: datetime.now(timezone.utc))
     budget = budget or Budget()
     horizon = horizon_days or config.DEFAULT_HORIZON_DAYS
+    stop_after = config.BATCH_STOP_AFTER_QUOTA_ERRORS if stop_after is None else stop_after
     notes = list(warnings or [])
     started = now_fn().isoformat()
 
@@ -522,27 +619,46 @@ def run_batch(tickers: Iterable, state: dict, stages: "pipeline.Stages", real_an
     skip_set = set(skipped)
     to_run = [t for t in listed if t not in skip_set]
 
+    queue_list: list = []
+    for item in (queue or []):
+        if isinstance(item, str) and item not in queue_list:
+            queue_list.append(item)
+    usable = [t for t in queue_list if t in set(to_run)]
+    queue_set: Optional[set] = None
+    if queue_list:
+        if len(usable) < len(queue_list):
+            notes.append(f"{len(queue_list) - len(usable)} queue entr"
+                         f"{'y' if len(queue_list) - len(usable) == 1 else 'ies'} not in this run's ticker list ignored")
+        if usable:
+            queue_set = set(usable)
+        else:
+            notes.append("the queue has no ticker from this run: it was ignored")
+
     records: dict = {}
     for t in to_run:
         try:
             records[t] = stages.load_prior(t)
         except Exception:
             records[t] = None
-    ordered = order_tickers(to_run, records)
+    ordered = order_tickers(to_run, records, usable if queue_set else None)
 
-    decisions: dict = {}
-    deferred: set = set()
+    track = RunTrack()
     wrapped = replace(stages, analyse=make_batch_analyse(
-        real_analyse, stages.load_prior, budget, today, now_fn, decisions, deferred))
+        real_analyse, stages.load_prior, budget, today, now_fn, track, queue_set, stop_after))
     run = pipeline.run_pipeline(ordered, horizon, wrapped, max_workers=1)
 
     rows: list = []
     for result, line in zip(run.results, run.to_rows()):
-        status = "deferred" if result.ticker in deferred else result.status
-        decision = decisions.get(result.ticker)
+        if result.ticker in track.held:
+            status = "held"
+        elif result.ticker in track.deferred:
+            status = "deferred"
+        else:
+            status = result.status
+        decision = track.decisions.get(result.ticker)
         rows.append({"ticker": result.ticker, "status": status,
                      "matrix": decision.status if decision else None,
-                     "reason": decision.reason if decision else "",
+                     "reason": track.why.get(result.ticker) or (decision.reason if decision else ""),
                      "rank": line.get("Rank"), "total": line.get("Total"), "rating": line.get("Rating"),
                      "notes": line.get("Notes")})
         record_outcome(state, result.ticker, status, today)
@@ -553,9 +669,11 @@ def run_batch(tickers: Iterable, state: dict, stages: "pipeline.Stages", real_an
                      "rank": None, "total": None, "rating": None, "notes": ""})
         record_outcome(state, t, "skipped", today)
 
-    counts = summary_counts(rows, budget.calls, budget.tokens, budget.max_calls, budget.max_tokens)
-    return BatchResult(rows=rows, counts=counts, state=state, warnings=notes, run_date=today.isoformat(),
-                       started_at=started, finished_at=now_fn().isoformat())
+    counts = summary_counts(rows, budget.calls, budget.tokens, budget.max_calls, budget.max_tokens,
+                            quota_errors=track.quota_errors, stopped_early=track.halted,
+                            queued_next=len(track.deferred))
+    return BatchResult(rows=rows, counts=counts, state=state, warnings=notes, queue=list(track.deferred),
+                       run_date=today.isoformat(), started_at=started, finished_at=now_fn().isoformat())
 
 
 # ------------------------------------------------------------ live run
@@ -620,6 +738,8 @@ def run_live(limit: Optional[int] = None, today: Optional[date] = None,
         if not tickers_path.is_file():
             return 2, ["Batch stopped: batch/tickers.csv was not found in the private data repository."]
         mirror.pull_file(_rel(state_path))           # absent on the very first run: that is fine
+        queue_path = Path(config.BATCH_QUEUE_FILE)
+        mirror.pull_file(_rel(queue_path))           # absent until a run has written it: no restriction
 
         tickers, problems = parse_tickers_csv(tickers_path.read_text(encoding="utf-8"))
         if problems:
@@ -631,6 +751,12 @@ def run_live(limit: Optional[int] = None, today: Optional[date] = None,
         if state_warning:
             warnings.append(state_warning)
 
+        queue_tickers = None
+        if queue_path.is_file():
+            queue_tickers, queue_problems = parse_tickers_csv(queue_path.read_text(encoding="utf-8"))
+            if queue_problems:
+                warnings.append(f"{len(queue_problems)} problem line(s) in batch/queue.csv")
+
         stages = stages_factory() if stages_factory else _live_stages()
         real_analyse = analyse_factory() if analyse_factory else pipeline.make_real_analyse()
 
@@ -639,12 +765,13 @@ def run_live(limit: Optional[int] = None, today: Optional[date] = None,
         try:
             with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
                 result = run_batch(tickers, state, stages, real_analyse, today=today,
-                                   limit=limit, warnings=warnings)
+                                   limit=limit, warnings=warnings, queue=queue_tickers)
         finally:
             logging.disable(logging.NOTSET)
 
         runs_dir = Path(config.BATCH_RUNS_DIR)
         files = [(state_path, dump_state(result.state)),
+                 (queue_path, result.queue_csv()),
                  (runs_dir / f"{today.isoformat()}.json", result.summary_json()),
                  (runs_dir / f"{today.isoformat()}.csv", result.ranked_csv()),
                  (runs_dir / f"{today.isoformat()}.log", captured.getvalue() or "(no engine output)\n")]
