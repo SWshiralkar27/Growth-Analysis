@@ -1,6 +1,6 @@
 """
 config.py
-Version: Step B1, v0.13.0 (2026-11-08). Code version 2026-11-stepB1.
+Version: Step B2, v0.13.1 (2026-11-08). Code version 2026-11-stepB2.
 Spec: README v3.1 DRAFT (v2.0 is binding where it differs).
 
 Purpose: constants, paths, versions, secret lookup, start-up checks.
@@ -21,6 +21,7 @@ Changes in v0.13.0 (Step B1): added the batch settings (ANALYSIS_MAX_AGE_DAYS, F
 BATCH_MAX_CALLS_PER_RUN, BATCH_MAX_TOKENS_PER_RUN, MAX_CONSECUTIVE_FAILURES: the v2.0 values from
 README v3.3 section 10), BATCH_CHARS_PER_TOKEN, the batch paths, and "batch/" in PERSIST_PREFIXES so the
 tickers list, the failure counters and the run summaries can be backed up to the private repository.
+Changes in v0.13.1 (Step B2): only CODE_VERSION changed.
 PROMPT_VERSION: unchanged (2026-11-v3). No bump needed.
 """
 from __future__ import annotations
@@ -32,7 +33,7 @@ from pathlib import Path
 from errors import ConfigError
 
 # ---------------------------------------------------------------- versions
-CODE_VERSION = "2026-11-stepB1"
+CODE_VERSION = "2026-11-stepB2"
 SPEC_VERSION = "v3.1-draft"
 PROMPT_VERSION = "2026-11-v3"  # bump whenever the prompt, JSON schema or scoring changes (v2.0 used 2026-10-v2)
 SCHEMA_VERSION = 1
