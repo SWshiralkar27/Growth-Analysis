@@ -1,0 +1,35 @@
+name: batch
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Only the first N tickers (leave blank for all)"
+        required: false
+        default: "3"
+permissions:
+  contents: read
+concurrency:
+  group: batch
+  cancel-in-progress: false
+jobs:
+  batch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Run the batch
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DATA_REPO: ${{ secrets.DATA_REPO }}
+          DATA_TOKEN: ${{ secrets.DATA_TOKEN }}
+          DATA_BRANCH: ${{ secrets.DATA_BRANCH }}
+          LIMIT: ${{ github.event.inputs.limit }}
+        run: |
+          export GITHUB_DATA_REPO="$DATA_REPO"
+          export GITHUB_DATA_TOKEN="$DATA_TOKEN"
+          export GITHUB_DATA_BRANCH="$DATA_BRANCH"
+          if [ -n "$LIMIT" ]; then python batch_runner.py --limit "$LIMIT"; else python batch_runner.py; fi
