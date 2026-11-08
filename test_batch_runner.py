@@ -1,6 +1,6 @@
 """
 test_batch_runner.py
-Version: Step B2, v0.14.0 (2026-11-08). (B1 file; one test changed in B2.)
+Version: Step B4, v0.15.0 (2026-11-08). (B1 file; one test changed in B2; the status list and the new queue and quota tests in B4.)
 Tests for the pure batch logic in batch_runner.py: the tickers list, the six matrix rows, the budget,
 the run order, the failure counters and the counts-only summary. No files, network or Gemini.
 Run:  python -m unittest discover -s . -p "test_*.py" -v
@@ -304,7 +304,7 @@ class SummaryTests(unittest.TestCase):
         c = br.summary_counts(self.ROWS, calls=3, est_tokens=90_000)
         self.assertEqual(c["tickers"], 5)
         self.assertEqual(c["by_status"], {"ok": 2, "stale": 0, "partial": 0, "failed": 1,
-                                          "deferred": 1, "skipped": 1})
+                                          "deferred": 1, "skipped": 1, "held": 0})
         self.assertEqual(c["by_matrix"]["fresh"], 1)
         self.assertEqual(c["by_matrix"]["delta"], 1)
         self.assertEqual(c["by_matrix"]["stale"], 1)
@@ -323,6 +323,55 @@ class SummaryTests(unittest.TestCase):
         c = br.summary_counts([{"status": "weird", "matrix": "nope"}])
         self.assertEqual(sum(c["by_status"].values()), 0)
         self.assertEqual(sum(c["by_matrix"].values()), 0)
+
+
+class QuotaAndQueueTests(unittest.TestCase):
+    def test_quota_errors_are_recognised(self):
+        self.assertTrue(br.is_quota_error(Exception("ClientError (HTTP 429): 429 RESOURCE_EXHAUSTED. You exceeded")))
+        self.assertTrue(br.is_quota_error("resource_exhausted"))
+        self.assertTrue(br.is_quota_error(Exception("HTTP 429")))
+        self.assertFalse(br.is_quota_error(Exception("ServerError (HTTP 503): 503 UNAVAILABLE")))
+        self.assertFalse(br.is_quota_error(Exception("timeout")))
+
+    def test_queued_tickers_run_first_in_queue_order(self):
+        records = {"A": record(days_old=5), "B": record(days_old=50), "C": None}
+        self.assertEqual(br.order_tickers(["A", "B", "C"], records), ["C", "B", "A"])
+        self.assertEqual(br.order_tickers(["A", "B", "C"], records, ["A", "B"]), ["A", "B", "C"])
+        self.assertEqual(br.order_tickers(["A", "B", "C"], records, ["B", "A", "A", "X"]), ["B", "A", "C"])
+
+    def test_no_or_empty_queue_changes_nothing(self):
+        records = {"A": record(days_old=5), "B": None}
+        for q in (None, [], ()):
+            self.assertEqual(br.order_tickers(["A", "B"], records, q), ["B", "A"])
+
+    def test_the_queue_file_round_trips_and_its_help_lines_are_ignored(self):
+        text = br.queue_csv(["TCS", "INFY"])
+        self.assertIn("# Delete a line", text)
+        self.assertEqual(br.parse_tickers_csv(text), (["TCS", "INFY"], []))
+        self.assertEqual(br.parse_tickers_csv(br.queue_csv([])), ([], []))
+
+    def test_held_is_a_run_status_and_counts_new_fields(self):
+        self.assertIn("held", br.RUN_STATUSES)
+        rows = [{"ticker": "TCS", "status": "held"}, {"ticker": "INFY", "status": "deferred"}]
+        c = br.summary_counts(rows, quota_errors=3, stopped_early=True, queued_next=1)
+        self.assertEqual((c["by_status"]["held"], c["quota_errors"], c["stopped_early"], c["queued_next"]),
+                         (1, 3, True, 1))
+
+    def test_the_public_lines_report_a_stop_and_the_queue_without_tickers(self):
+        rows = [{"ticker": "TCS", "status": "held"}, {"ticker": "INFY", "status": "deferred"}]
+        text = "\n".join(br.public_log_lines(br.summary_counts(rows, quota_errors=3, stopped_early=True,
+                                                               queued_next=1)))
+        self.assertIn("Stopped early: 3 Gemini quota errors", text)
+        self.assertIn("Queue for the next run: 1 waiting, 1 held back this run", text)
+        self.assertNotIn("TCS", text)
+        self.assertNotIn("INFY", text)
+        calm = "\n".join(br.public_log_lines(br.summary_counts([], quota_errors=2)))
+        self.assertIn("Gemini quota errors: 2", calm)
+        self.assertNotIn("Stopped early", calm)
+
+    def test_the_new_settings(self):
+        self.assertEqual(config.BATCH_STOP_AFTER_QUOTA_ERRORS, 3)
+        self.assertEqual(config.BATCH_QUEUE_FILE.name, "queue.csv")
 
 
 class ConfigTests(unittest.TestCase):
