@@ -1,6 +1,6 @@
 """
 pipeline.py
-Version: Step 12, v0.12.0 (2026-11-07). Code version 2026-11-step12.
+Version: Step B2, v0.13.0 (2026-11-08). Code version 2026-11-stepB2.
 Spec: README v3.1 DRAFT, sections 4, 5, 8 and 10.
 
 Step 11b: added the manual-input helpers (manual_status, save_manual_input,
@@ -14,6 +14,9 @@ are summed into the scorer's existing institutional-holding signal. score_card.p
 no weight, cap or threshold changed; the 69 cap is not lifted by a manual pledge. The saved record
 keeps the raw fetched financials; the manual values are applied to a copy used only for scoring.
 PROMPT_VERSION: unchanged (the prompt, schema and Gemini input are the same).
+Step B2 (two additive changes for batch_runner.py; defaults unchanged): filings_context_stage takes an
+optional max_chars (the batch passes config.BATCH_MAX_PROMPT_CHARS), and the real analyse stage takes an
+optional force_refresh (sent to the analyser only when True, so a "stale" ticker really calls Gemini again).
 
 Purpose: the orchestrator. Sequences the per-ticker stages, handles failures,
 ranks the results and returns plain data. It contains no scoring maths, no
@@ -246,11 +249,12 @@ def make_real_fetch(fetch_fn=None):
 def make_real_analyse(generate_fn=None, limiter=None, sleep=time.sleep, cache_dir=None):
     """The analyse stage backed by gemini_analyser. generate_fn is for tests; the default
     builds the real Gemini call from the GEMINI_API_KEY secret."""
-    def analyse(ticker: str, context: dict, financials: dict) -> dict:
+    def analyse(ticker: str, context: dict, financials: dict, force_refresh: bool = False) -> dict:
         ctx = context if isinstance(context, dict) else {}
+        extra = {"force_refresh": True} if force_refresh else {}   # sent only when asked for
         return gemini_analyser.analyse_company(
             ticker, financials, ctx.get("text", ""), ctx.get("meta", {}),
-            generate_fn=generate_fn, limiter=limiter or _LIMITER, sleep=sleep, cache_dir=cache_dir)
+            generate_fn=generate_fn, limiter=limiter or _LIMITER, sleep=sleep, cache_dir=cache_dir, **extra)
     return analyse
 
 
@@ -369,12 +373,14 @@ def score_stage_v21(ticker, analysis, financials, indicators, manual,
     )
 
 
-def filings_context_stage(ticker: str) -> dict:
+def filings_context_stage(ticker: str, max_chars: Optional[int] = None) -> dict:
     """Filings stage: read TICKER_*.pdf (or TICKER.pdf) and build the LLM context.
 
     Returns plain data: {"text", "meta", "documents", "unreadable"}. With no filings
     the text is empty and meta says so. Unreadable files are listed, never raised.
+    max_chars is the context budget; None means config.MAX_PROMPT_CHARS (the interactive budget).
     """
+    limit = config.MAX_PROMPT_CHARS if max_chars is None else int(max_chars)
     ensure_local_filings(ticker)
     folder = config.FILINGS_FOLDER
     paths = glob.glob(os.path.join(folder, f"{glob.escape(ticker)}_*.pdf"))
@@ -392,9 +398,9 @@ def filings_context_stage(ticker: str) -> dict:
             unreadable.append((doc.get("document"), doc.get("error") or "no extractable text (scanned?)"))
 
     if documents:
-        text, meta = pdf_extractor.build_context(documents, max_chars=config.MAX_PROMPT_CHARS)
+        text, meta = pdf_extractor.build_context(documents, max_chars=limit)
     else:
-        text, meta = pdf_extractor.build_context([], max_chars=config.MAX_PROMPT_CHARS)
+        text, meta = pdf_extractor.build_context([], max_chars=limit)
     return {"text": text, "meta": meta,
             "documents": [d["document"] for d in documents], "unreadable": unreadable}
 
