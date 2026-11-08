@@ -1,6 +1,6 @@
 """
 config.py
-Version: Step B2, v0.13.1 (2026-11-08). Code version 2026-11-stepB2.
+Version: Step B4, v0.14.0 (2026-11-08). Code version 2026-11-stepB4.
 Spec: README v3.1 DRAFT (v2.0 is binding where it differs).
 
 Purpose: constants, paths, versions, secret lookup, start-up checks.
@@ -22,6 +22,7 @@ BATCH_MAX_CALLS_PER_RUN, BATCH_MAX_TOKENS_PER_RUN, MAX_CONSECUTIVE_FAILURES: the
 README v3.3 section 10), BATCH_CHARS_PER_TOKEN, the batch paths, and "batch/" in PERSIST_PREFIXES so the
 tickers list, the failure counters and the run summaries can be backed up to the private repository.
 Changes in v0.13.1 (Step B2): only CODE_VERSION changed.
+Changes in v0.14.0 (Step B4): added BATCH_STOP_AFTER_QUOTA_ERRORS and BATCH_QUEUE_FILE.
 PROMPT_VERSION: unchanged (2026-11-v3). No bump needed.
 """
 from __future__ import annotations
@@ -33,7 +34,7 @@ from pathlib import Path
 from errors import ConfigError
 
 # ---------------------------------------------------------------- versions
-CODE_VERSION = "2026-11-stepB2"
+CODE_VERSION = "2026-11-stepB4"
 SPEC_VERSION = "v3.1-draft"
 PROMPT_VERSION = "2026-11-v3"  # bump whenever the prompt, JSON schema or scoring changes (v2.0 used 2026-10-v2)
 SCHEMA_VERSION = 1
@@ -166,6 +167,8 @@ MAX_CONSECUTIVE_FAILURES = 3          # failed runs in a row before a ticker is 
 BATCH_CHARS_PER_TOKEN = 4             # [CONFIRM] implied by v2.0: 120,000 characters is about 30k tokens
 BATCH_TICKERS_FILE = BATCH_DIR / "tickers.csv"
 BATCH_STATE_FILE = BATCH_DIR / "state.json"
+BATCH_QUEUE_FILE = BATCH_DIR / "queue.csv"   # tickers waiting for Gemini; the owner may edit it (Step B4)
+BATCH_STOP_AFTER_QUOTA_ERRORS = 3     # [CONFIRM] quota errors (HTTP 429) in a row before the run stops calling Gemini
 
 # ---------------------------------------------------------------- statuses
 STATUS_OK = "ok"
