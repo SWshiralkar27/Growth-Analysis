@@ -1,6 +1,6 @@
 """
 test_batch_runner.py
-Version: Step B1, v0.13.0 (2026-11-08).
+Version: Step B2, v0.14.0 (2026-11-08). (B1 file; one test changed in B2.)
 Tests for the pure batch logic in batch_runner.py: the tickers list, the six matrix rows, the budget,
 the run order, the failure counters and the counts-only summary. No files, network or Gemini.
 Run:  python -m unittest discover -s . -p "test_*.py" -v
@@ -335,11 +335,13 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("batch/", config.PERSIST_PREFIXES)
         self.assertEqual(config.PERSIST_PREFIXES[:3], ("store/", "filings/", "manual_inputs/"))
 
-    def test_the_module_imports_no_engine_module(self):
+    def test_the_module_imports_only_pipeline_config_and_errors(self):
+        # Step B2: batch_runner is an entry point like app.py, so it may import pipeline.
         with open(os.path.join(HERE, "batch_runner.py"), encoding="utf-8") as fh:
             src = fh.read()
-        for name in ("pipeline", "store", "persistence", "gemini_analyser", "data_fetch",
-                     "pdf_extractor", "filings", "score_card", "report_generator"):
+        for name in ("store", "persistence", "gemini_analyser", "data_fetch",
+                     "pdf_extractor", "filings", "score_card", "report_generator",
+                     "manual_inputs_store", "rate_limiter"):
             self.assertNotIn(f"import {name}", src)
             self.assertNotIn(f"from {name} ", src)
 
