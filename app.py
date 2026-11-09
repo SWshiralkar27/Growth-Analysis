@@ -1,6 +1,6 @@
 """
 app.py
-Version: Step B5, v0.13.0 (2026-11-08). Code version 2026-11-stepB5.
+Version: Step B5a, v0.13.1 (2026-11-09). Code version 2026-11-stepB5a.
 Spec: README v3.1 DRAFT, sections 5.3, 8 and 13 (Streamlit replaces the desktop
 GUI; this is a spec change awaiting recording in v3.2).
 
@@ -31,6 +31,9 @@ Changes in v0.13.0 (Step B5):
   - New "Batch results" tab: load the newest overnight batch run from the private repository (counts, a
     ranked table with a status filter, CSV download) and edit the queue of tickers waiting for Gemini
     (remove tickers, move some to the top, save). All logic lives in pipeline.py; this file only shows it.
+
+Changes in v0.13.1 (Step B5a): the Batch results table shows a total and a rating only for tickers that have
+an analysis, ranked by total; deferred, held, partial, failed and skipped tickers show a dash.
 
 Purpose: Streamlit front end. It collects tickers and a horizon, runs the
 pipeline in a worker thread and shows progress from the main thread. It holds
@@ -247,9 +250,10 @@ def _render_batch_summary(view) -> None:
             for w in view.warnings:
                 st.text(w)
     rows = view.rows
-    statuses = sorted({str(r.get("status")) for r in rows})
+    display = pipeline.batch_display_rows(rows, view.queue)
+    statuses = sorted({str(r.get("status")) for r in display})
     chosen = st.multiselect("Show these statuses", statuses, default=statuses, key="batch_status_filter")
-    shown = [r for r in rows if str(r.get("status")) in chosen]
+    shown = [r for r in display if str(r.get("status")) in chosen]
     if not shown:
         st.caption("No rows to show.")
         return
@@ -260,7 +264,9 @@ def _render_batch_summary(view) -> None:
     st.dataframe(table, use_container_width=True, hide_index=True)
     st.download_button("Download CSV", pd.DataFrame(rows).to_csv(index=False).encode("utf-8"),
                        file_name=f"batch_{view.run_date or 'latest'}.csv", mime="text/csv", key="batch_csv")
-    st.caption("Totals of partial and deferred tickers are not real scores: they have no AI analysis yet.")
+    st.caption("Totals and ratings are shown only for tickers with an AI analysis (status ok or stale), ranked by "
+               "total. Waiting tickers (deferred, held, partial) show a dash: they have no analysis yet. The CSV "
+               "download keeps every raw field.")
 
 
 def _render_queue_editor() -> None:

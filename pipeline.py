@@ -1,6 +1,6 @@
 """
 pipeline.py
-Version: Step B5, v0.14.0 (2026-11-08). Code version 2026-11-stepB5.
+Version: Step B5a, v0.14.1 (2026-11-09). Code version 2026-11-stepB5a.
 Spec: README v3.1 DRAFT, sections 4, 5, 8 and 10.
 
 Step 11b: added the manual-input helpers (manual_status, save_manual_input,
@@ -21,6 +21,8 @@ Step B5 (additive, for the app's "Batch results" tab): load_latest_batch_run() r
 batch/runs/DATE.json from the private repository; load_batch_queue() and save_batch_queue() read and write
 batch/queue.csv, the owner's editable list of tickers waiting for Gemini (same file format as
 batch_runner.queue_csv). Nothing else in this file changed.
+Step B5a: batch_display_rows() prepares the rows of the Batch results table (totals and ratings only for
+tickers that have an analysis; the others show a dash).
 
 Purpose: the orchestrator. Sequences the per-ticker stages, handles failures,
 ranks the results and returns plain data. It contains no scoring maths, no
@@ -838,6 +840,40 @@ def load_latest_batch_run() -> BatchView:
                          [w for w in warnings if isinstance(w, str)])
     except Exception as exc:     # the screen must never break because a file is odd
         return BatchView(False, f"Could not read the batch results ({type(exc).__name__}).")
+
+
+BATCH_REAL_STATUSES = ("ok", "stale")     # tickers that have an AI analysis behind their total
+BATCH_DASH = "\u2013"
+
+
+def batch_display_rows(rows: Iterable, queue: Optional[Iterable] = None) -> list:
+    """Rows of the Batch results table. Only tickers with an analysis (status ok or stale) show a total and
+    a rating, ranked 1, 2, 3 by total. Deferred, held, partial, failed and skipped tickers have no analysis,
+    so their total (a financials-only number scored against a prior) is hidden: they show a dash, come after
+    the ranked ones, and follow the queue order when they are queued. Rank, total and rating become text.
+    The input rows are not changed."""
+    rows = [dict(r) for r in rows if isinstance(r, dict)]
+    queue_pos = {t: i for i, t in enumerate(queue or []) if isinstance(t, str)}
+
+    def total_of(row):
+        value = row.get("total")
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    real = [r for r in rows if r.get("status") in BATCH_REAL_STATUSES]
+    other = [(i, r) for i, r in enumerate(rows) if r.get("status") not in BATCH_REAL_STATUSES]
+    real.sort(key=lambda r: (total_of(r) is None, -(total_of(r) or 0.0)))     # stable: ties keep their order
+    other.sort(key=lambda ir: (queue_pos.get(ir[1].get("ticker"), len(queue_pos)), ir[0]))
+    out: list = []
+    for number, row in enumerate(real, start=1):
+        total = total_of(row)
+        row["rank"] = str(number)
+        row["total"] = f"{total:.1f}" if total is not None else BATCH_DASH
+        row["rating"] = str(row["rating"]) if row.get("rating") else BATCH_DASH
+        out.append(row)
+    for _, row in other:
+        row["rank"], row["total"], row["rating"] = BATCH_DASH, BATCH_DASH, BATCH_DASH
+        out.append(row)
+    return out
 
 
 def parse_queue_text(text: Any) -> list:
