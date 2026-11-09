@@ -1,6 +1,6 @@
 """
 app.py
-Version: Step 12, v0.12.0 (2026-11-07). Code version 2026-11-step12.
+Version: Step B5, v0.13.0 (2026-11-08). Code version 2026-11-stepB5.
 Spec: README v3.1 DRAFT, sections 5.3, 8 and 13 (Streamlit replaces the desktop
 GUI; this is a spec change awaiting recording in v3.2).
 
@@ -26,6 +26,11 @@ Changes in v0.12.0 (Step 12): wording only. Saved promoter pledge, and FII plus 
 fresh, now count in the score (see pipeline.apply_manual_inputs); the two texts that said manual
 values are "not used in the score" are corrected. The Notes column of the results table shows
 which manual values were counted.
+
+Changes in v0.13.0 (Step B5):
+  - New "Batch results" tab: load the newest overnight batch run from the private repository (counts, a
+    ranked table with a status filter, CSV download) and edit the queue of tickers waiting for Gemini
+    (remove tickers, move some to the top, save). All logic lives in pipeline.py; this file only shows it.
 
 Purpose: Streamlit front end. It collects tickers and a horizon, runs the
 pipeline in a worker thread and shows progress from the main thread. It holds
@@ -221,6 +226,102 @@ def render_saved_panel() -> None:
 
 def _clear_uploader() -> None:
     st.session_state["uploader_gen"] = st.session_state.get("uploader_gen", 0) + 1
+
+
+def _render_batch_summary(view) -> None:
+    counts = view.counts or {}
+    by_status = counts.get("by_status") or {}
+    st.markdown(f"**Run date: {view.run_date or 'unknown'}**")
+    cols = st.columns(6)
+    cols[0].metric("Tickers", counts.get("tickers", len(view.rows)))
+    cols[1].metric("ok", by_status.get("ok", 0))
+    cols[2].metric("Deferred", by_status.get("deferred", 0))
+    cols[3].metric("Held", by_status.get("held", 0))
+    cols[4].metric("Partial or failed", by_status.get("partial", 0) + by_status.get("failed", 0))
+    cols[5].metric("Gemini calls", f"{counts.get('gemini_calls', 0)} of {counts.get('max_calls', 0)}")
+    if counts.get("stopped_early"):
+        st.warning(f"This run stopped early after {counts.get('quota_errors', 0)} Gemini quota errors. "
+                   f"The remaining tickers that need Gemini are waiting in the queue.")
+    if view.warnings:
+        with st.expander(f"Warnings ({len(view.warnings)})"):
+            for w in view.warnings:
+                st.text(w)
+    rows = view.rows
+    statuses = sorted({str(r.get("status")) for r in rows})
+    chosen = st.multiselect("Show these statuses", statuses, default=statuses, key="batch_status_filter")
+    shown = [r for r in rows if str(r.get("status")) in chosen]
+    if not shown:
+        st.caption("No rows to show.")
+        return
+    df = pd.DataFrame(shown)
+    wanted = {"rank": "Rank", "ticker": "Ticker", "status": "Status", "matrix": "Matrix row",
+              "total": "Total", "rating": "Rating", "reason": "Reason"}
+    table = df[[c for c in wanted if c in df.columns]].rename(columns=wanted)
+    st.dataframe(table, use_container_width=True, hide_index=True)
+    st.download_button("Download CSV", pd.DataFrame(rows).to_csv(index=False).encode("utf-8"),
+                       file_name=f"batch_{view.run_date or 'latest'}.csv", mime="text/csv", key="batch_csv")
+    st.caption("Totals of partial and deferred tickers are not real scores: they have no AI analysis yet.")
+
+
+def _render_queue_editor() -> None:
+    queue = st.session_state.get("batch_queue")
+    if queue is None:
+        return
+    st.subheader("Queue for the next run")
+    notice = st.session_state.pop("batch_queue_notice", None)
+    if notice:
+        st.success(notice)
+    message = st.session_state.get("batch_queue_msg")
+    if message:
+        st.caption(message)
+    if not queue:
+        st.caption("The queue is empty, so the next run may send any ticker that needs it to Gemini.")
+        return
+    st.caption("While the queue lists tickers, only queued tickers may call Gemini in the next run; the others "
+               "are held for that run. Tickers higher in the list run first.")
+    gen = st.session_state.get("batch_q_gen", 0)
+    remove = st.multiselect("Remove from the queue (held in the next run)", queue, key=f"batch_q_remove_{gen}")
+    keep = [t for t in queue if t not in remove]
+    first = st.multiselect("Run these first (optional, in the order you pick them)", keep,
+                           key=f"batch_q_first_{gen}")
+    new_queue = first + [t for t in keep if t not in first]
+    st.caption(f"After saving: {len(new_queue)} waiting, {len(remove)} removed.")
+    allowed = True
+    if not new_queue:
+        allowed = st.checkbox("I understand that an empty queue lets every waiting ticker call Gemini",
+                              key=f"batch_q_empty_{gen}")
+    if st.button("Save the queue", key=f"batch_q_save_{gen}", disabled=not allowed):
+        ok, text = pipeline.save_batch_queue(new_queue)
+        if ok:
+            st.session_state["batch_queue"] = new_queue
+            st.session_state["batch_q_gen"] = gen + 1
+            st.session_state["batch_queue_notice"] = text
+            st.rerun()
+        else:
+            st.error(text)
+
+
+def render_batch_panel() -> None:
+    st.subheader("Batch results")
+    st.caption("The last finished overnight batch run, read from the private data repository when you press "
+               "the button. The batch itself is started on GitHub (Actions, batch, Run workflow). After a "
+               "run, reboot the app (Manage app) to refresh the reports in Saved analyses.")
+    if st.button("Load the latest batch run", key="batch_load"):
+        with st.spinner("Reading the private repository..."):
+            st.session_state["batch_view"] = pipeline.load_latest_batch_run()
+            queue, message = pipeline.load_batch_queue()
+            st.session_state["batch_queue"] = queue
+            st.session_state["batch_queue_msg"] = message
+            st.session_state["batch_q_gen"] = st.session_state.get("batch_q_gen", 0) + 1
+    view = st.session_state.get("batch_view")
+    if view is None:
+        st.caption("Press the button to load it.")
+        return
+    if view.ok:
+        _render_batch_summary(view)
+    else:
+        st.error(view.message)
+    _render_queue_editor()
 
 
 def render_filings_panel() -> None:
@@ -517,8 +618,8 @@ def main() -> None:
             st.caption("Stored analyses: unavailable")
         st.caption(f"Code {config.CODE_VERSION} | spec {config.SPEC_VERSION}")
 
-    tab_run, tab_files, tab_inputs, tab_saved, tab_diag = st.tabs(
-        ["Run analysis", "Filings", "Inputs", "Saved analyses", "Diagnostics"])
+    tab_run, tab_files, tab_inputs, tab_saved, tab_batch, tab_diag = st.tabs(
+        ["Run analysis", "Filings", "Inputs", "Saved analyses", "Batch results", "Diagnostics"])
     with tab_run:
         render_run_panel(horizon)
     with tab_files:
@@ -527,6 +628,8 @@ def main() -> None:
         render_inputs_panel()
     with tab_saved:
         render_saved_panel()
+    with tab_batch:
+        render_batch_panel()
     with tab_diag:
         render_diagnostics_panel()
 

@@ -1,6 +1,6 @@
 """
 pipeline.py
-Version: Step B2, v0.13.0 (2026-11-08). Code version 2026-11-stepB2.
+Version: Step B5, v0.14.0 (2026-11-08). Code version 2026-11-stepB5.
 Spec: README v3.1 DRAFT, sections 4, 5, 8 and 10.
 
 Step 11b: added the manual-input helpers (manual_status, save_manual_input,
@@ -17,6 +17,10 @@ PROMPT_VERSION: unchanged (the prompt, schema and Gemini input are the same).
 Step B2 (two additive changes for batch_runner.py; defaults unchanged): filings_context_stage takes an
 optional max_chars (the batch passes config.BATCH_MAX_PROMPT_CHARS), and the real analyse stage takes an
 optional force_refresh (sent to the analyser only when True, so a "stale" ticker really calls Gemini again).
+Step B5 (additive, for the app's "Batch results" tab): load_latest_batch_run() reads the newest
+batch/runs/DATE.json from the private repository; load_batch_queue() and save_batch_queue() read and write
+batch/queue.csv, the owner's editable list of tickers waiting for Gemini (same file format as
+batch_runner.queue_csv). Nothing else in this file changed.
 
 Purpose: the orchestrator. Sequences the per-ticker stages, handles failures,
 ranks the results and returns plain data. It contains no scoring maths, no
@@ -43,8 +47,10 @@ from __future__ import annotations
 import copy
 import glob
 import io
+import json
 import os
 import re
+import tempfile
 import threading
 import time
 import zipfile
@@ -745,6 +751,157 @@ def data_notes(result: "TickerResult") -> dict:
         "filings_unreadable": list(result.unreadable),
         "stage_errors": dict(result.stage_errors),
     }
+
+
+# ------------------------------------------------- batch results (Step B5)
+BATCH_RUN_FILE = re.compile(r"^batch/runs/\d{4}-\d{2}-\d{2}\.json$")
+# The same help text batch_runner.queue_csv writes (a test checks the two stay identical).
+BATCH_QUEUE_HELP = ("# Tickers waiting for a Gemini analysis, in the order they will run.\n"
+                    "# Delete a line to keep that ticker out of the next run, then commit the file.\n")
+
+
+@dataclass
+class BatchView:
+    """What the app's Batch results tab shows. ok is False when something could not be read."""
+    ok: bool
+    message: str = ""
+    run_date: str = ""
+    counts: dict = field(default_factory=dict)
+    rows: list = field(default_factory=list)
+    queue: list = field(default_factory=list)
+    warnings: list = field(default_factory=list)
+
+
+def _write_text_atomic(path, text: str) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        tmp = None
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def _fresh_copy(mirror, path):
+    """Drop the local copy of a file and pull the current one from the private repository.
+    (pull_file never overwrites a local file, so a stale copy has to go first.)"""
+    target = Path(path)
+    rel = _rel_to_data(target)
+    if rel is None:
+        return persistence.OpResult(False, "refused", "file is outside the data folder", str(path))
+    try:
+        target.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        return persistence.OpResult(False, "failed", f"could not replace the local copy ({exc})", rel)
+    return mirror.pull_file(rel)
+
+
+def load_latest_batch_run() -> BatchView:
+    """The newest batch run summary (batch/runs/DATE.json) from the private repository. Never raises."""
+    try:
+        mirror = get_mirror()
+        if mirror is None:
+            return BatchView(False, "Permanent storage is off, so batch results cannot be read.")
+        files, err = mirror.list_remote()
+        if files is None:
+            return BatchView(False, f"Could not list the private repository: {err}")
+        runs = sorted(f.path for f in files if BATCH_RUN_FILE.match(f.path))
+        if not runs:
+            return BatchView(False, "No batch run has been saved yet.")
+        target = Path(config.DATA_DIR) / runs[-1]
+        res = _fresh_copy(mirror, target)
+        if not res.ok:
+            return BatchView(False, f"Could not read the latest batch run: {res.message}")
+        try:
+            data = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return BatchView(False, "The latest batch summary is damaged and could not be read.")
+        if not isinstance(data, dict) or not isinstance(data.get("rows"), list):
+            return BatchView(False, "The latest batch summary has an unexpected format.")
+        queue = data.get("queue") if isinstance(data.get("queue"), list) else []
+        warnings = data.get("warnings") if isinstance(data.get("warnings"), list) else []
+        return BatchView(True, "", str(data.get("run_date") or ""),
+                         data.get("counts") if isinstance(data.get("counts"), dict) else {},
+                         [r for r in data["rows"] if isinstance(r, dict)],
+                         [q for q in queue if isinstance(q, str)],
+                         [w for w in warnings if isinstance(w, str)])
+    except Exception as exc:     # the screen must never break because a file is odd
+        return BatchView(False, f"Could not read the batch results ({type(exc).__name__}).")
+
+
+def parse_queue_text(text: Any) -> list:
+    """Tickers in a queue file: comment lines (#) and a header line (ticker) ignored, upper-cased,
+    de-duplicated, invalid lines dropped."""
+    out: list = []
+    if not isinstance(text, str):
+        return out
+    header_seen = False
+    for line in text.lstrip("\ufeff").splitlines():
+        cell = line.split(",")[0].strip()
+        if not cell or cell.startswith("#"):
+            continue
+        if not header_seen:
+            header_seen = True
+            if cell.lower() in ("ticker", "tickers", "symbol"):
+                continue
+        ticker = cell.upper()
+        if config.TICKER_PATTERN.match(ticker) and any(ch.isalnum() for ch in ticker) and ticker not in out:
+            out.append(ticker)
+    return out
+
+
+def queue_text(tickers: Iterable) -> str:
+    """The text of batch/queue.csv: help lines, a header and one ticker per line."""
+    return BATCH_QUEUE_HELP + "ticker\n" + "".join(f"{t}\n" for t in tickers)
+
+
+def load_batch_queue() -> tuple:
+    """(tickers, message): the current batch/queue.csv from the private repository. Never raises."""
+    try:
+        mirror = get_mirror()
+        if mirror is None:
+            return [], "Permanent storage is off, so the queue cannot be read."
+        res = _fresh_copy(mirror, config.BATCH_QUEUE_FILE)
+        if not res.ok:
+            return [], f"There is no queue yet (a batch run writes it), or it could not be read: {res.message}"
+        return parse_queue_text(Path(config.BATCH_QUEUE_FILE).read_text(encoding="utf-8")), ""
+    except Exception as exc:
+        return [], f"Could not read the queue ({type(exc).__name__})."
+
+
+def save_batch_queue(tickers: Iterable) -> tuple:
+    """(ok, message): write batch/queue.csv and back it up to the private repository. The next batch
+    run reads it. An empty list is allowed and means no restriction. Never raises."""
+    try:
+        clean: list = []
+        for item in (tickers or []):
+            ticker = item.strip().upper() if isinstance(item, str) else ""
+            if not config.TICKER_PATTERN.match(ticker) or not any(ch.isalnum() for ch in ticker):
+                return False, "A queue entry is not a valid ticker; nothing was saved."
+            if ticker not in clean:
+                clean.append(ticker)
+        if get_mirror() is None:
+            return False, "Permanent storage is off, so the queue cannot be saved."
+        path = Path(config.BATCH_QUEUE_FILE)
+        _write_text_atomic(path, queue_text(clean))
+        res = push_local(path)
+        if res is None or not res.ok:
+            detail = f": {res.message}" if res is not None and res.message else ""
+            return False, f"The queue could not be backed up to the private repository{detail}"
+        return True, f"Saved: {len(clean)} ticker(s) in the queue. The next batch run will use it."
+    except Exception as exc:
+        return False, f"Could not save the queue ({type(exc).__name__})."
 
 
 def saved_tickers() -> list:
