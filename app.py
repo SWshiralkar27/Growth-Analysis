@@ -1,6 +1,6 @@
 """
 app.py
-Version: Step B5a, v0.13.1 (2026-11-09). Code version 2026-11-stepB5a.
+Version: Step B6, v0.14.0 (2026-11-09). Code version 2026-11-stepB6.
 Spec: README v3.1 DRAFT, sections 5.3, 8 and 13 (Streamlit replaces the desktop
 GUI; this is a spec change awaiting recording in v3.2).
 
@@ -35,6 +35,10 @@ Changes in v0.13.0 (Step B5):
 Changes in v0.13.1 (Step B5a): the Batch results table shows a total and a rating only for tickers that have
 an analysis, ranked by total; deferred, held, partial, failed and skipped tickers show a dash.
 
+Changes in v0.14.0 (Step B6): an optional password gate. When the APP_PASSWORD secret is set, main() shows
+only a password box until the right password is entered; nothing else is drawn first. With no secret set the
+app opens as before and the sidebar says so. The check itself lives in access.py.
+
 Purpose: Streamlit front end. It collects tickers and a horizon, runs the
 pipeline in a worker thread and shows progress from the main thread. It holds
 no scoring, fetching or report logic.
@@ -46,12 +50,14 @@ from __future__ import annotations
 import json
 import queue
 import threading
+import time
 from datetime import date
 
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
+import access
 import config
 import dalal_probe
 import pipeline
@@ -589,7 +595,36 @@ def render_run_panel(horizon: int) -> None:
         render_result(st.session_state["last_result"])
 
 
+def require_login() -> bool:
+    """The password gate. True when the app may draw itself: no password is set, or the right one was entered."""
+    expected = config.get_secret("app_password")
+    if not access.password_required(expected) or st.session_state.get("authed"):
+        return True
+    st.title("Equity Growth Analyst")
+    st.caption("This app is private. Enter the password to continue.")
+    entered = st.text_input("Password", type="password", key="login_password")
+    if entered:
+        if access.password_ok(entered, expected):
+            st.session_state["authed"] = True
+            st.rerun()
+        time.sleep(1)            # slows down guessing
+        st.error("That password is not right.")
+    return False
+
+
+def render_access_status() -> None:
+    if access.password_required(config.get_secret("app_password")):
+        st.caption("Password: on")
+        if st.button("Log out", key="logout_button"):
+            st.session_state.pop("authed", None)
+            st.rerun()
+    else:
+        st.caption("Password: not set (APP_PASSWORD). Anyone with the app's address can open it.")
+
+
 def main() -> None:
+    if not require_login():
+        return
     st.title("Equity Growth Analyst")
     st.warning(
         "The store, the scorer, the filings reader, the upload box, the permanent-storage "
@@ -618,6 +653,7 @@ def main() -> None:
         )
         st.caption(f"Gemini key present: {'yes' if config.has_secret('gemini_api_key') else 'no'}")
         render_storage_status()
+        render_access_status()
         try:
             st.caption(f"Stored analyses: {len(pipeline.default_store().list_tickers())}")
         except Exception:

@@ -1,6 +1,6 @@
 """
 config.py
-Version: Step B5a, v0.14.2 (2026-11-09). Code version 2026-11-stepB5a.
+Version: Step B6, v0.15.0 (2026-11-09). Code version 2026-11-stepB6.
 Spec: README v3.1 DRAFT (v2.0 is binding where it differs).
 
 Purpose: constants, paths, versions, secret lookup, start-up checks.
@@ -25,6 +25,7 @@ Changes in v0.13.1 (Step B2): only CODE_VERSION changed.
 Changes in v0.14.0 (Step B4): added BATCH_STOP_AFTER_QUOTA_ERRORS and BATCH_QUEUE_FILE.
 Changes in v0.14.1 (Step B5): only CODE_VERSION changed.
 Changes in v0.14.2 (Step B5a): only CODE_VERSION changed.
+Changes in v0.15.0 (Step B6): added the app_password secret name (APP_PASSWORD).
 PROMPT_VERSION: unchanged (2026-11-v3). No bump needed.
 """
 from __future__ import annotations
@@ -36,7 +37,7 @@ from pathlib import Path
 from errors import ConfigError
 
 # ---------------------------------------------------------------- versions
-CODE_VERSION = "2026-11-stepB5a"
+CODE_VERSION = "2026-11-stepB6"
 SPEC_VERSION = "v3.1-draft"
 PROMPT_VERSION = "2026-11-v3"  # bump whenever the prompt, JSON schema or scoring changes (v2.0 used 2026-10-v2)
 SCHEMA_VERSION = 1
@@ -204,6 +205,8 @@ SECRET_ENV_NAMES = {
     "github_data_repo": "GITHUB_DATA_REPO",      # for example  yourname/Growth-Analysis-Data
     "github_data_token": "GITHUB_DATA_TOKEN",    # fine-grained token, Contents read and write, that repo only
     "github_data_branch": "GITHUB_DATA_BRANCH",  # default main
+    # Step B6: an optional password for the Streamlit app. Not set means the app opens as before.
+    "app_password": "APP_PASSWORD",
 }
 
 
