@@ -1,6 +1,6 @@
 """
 test_batch_run.py
-Version: Step B4, v0.15.0 (2026-11-08). (B2 file; Step B4 adds the stop-early and queue tests and the queue file in the live tests.)
+Version: Step B7, v0.15.1 (2026-11-10). (B2 file; Step B4 added the stop-early and queue tests; Step B7 adds the daily call cap test.)
 Tests for the batch runner (run_batch, run_live, the analyse wrapper) and the two small pipeline.py
 changes made for it. Gemini, the data fetch and the private repository are replaced by fakes, so
 nothing here needs a network, pandas, yfinance, google-genai or Streamlit.
@@ -205,6 +205,16 @@ class BudgetRunTests(unittest.TestCase):
         self.assertEqual(row(res, "TCS")["status"], "deferred")
         self.assertEqual(json.dumps(self.f.store.records["TCS"], sort_keys=True), before)
         self.assertEqual(self.f.gemini_calls, [])
+
+    def test_the_default_call_cap_defers_the_rest_of_the_queue(self):
+        tickers = [f"T{i:02d}" for i in range(1, 21)]
+        res = self.f.run(tickers)
+        self.assertEqual(len(self.f.gemini_calls), 18)
+        self.assertEqual(res.counts["gemini_calls"], 18)
+        self.assertEqual(res.counts["max_calls"], 18)
+        self.assertEqual(res.queue, ["T19", "T20"])
+        self.assertEqual(sum(1 for r in res.rows if r["status"] == "ok"), 18)
+        self.assertFalse(res.counts["stopped_early"])
 
     def test_the_token_budget_counts_the_context_size(self):
         self.f.ctx["A"] = {"text": "x" * 400, "meta": {}, "documents": [], "unreadable": []}
