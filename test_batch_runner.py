@@ -1,6 +1,6 @@
 """
 test_batch_runner.py
-Version: Step B4, v0.15.0 (2026-11-08). (B1 file; one test changed in B2; the status list and the new queue and quota tests in B4.)
+Version: Step B7, v0.15.1 (2026-11-10). (B1 file; changed in B2 and B4; Step B7 updates the expected call cap and adds the free-tier limit tests.)
 Tests for the pure batch logic in batch_runner.py: the tickers list, the six matrix rows, the budget,
 the run order, the failure counters and the counts-only summary. No files, network or Gemini.
 Run:  python -m unittest discover -s . -p "test_*.py" -v
@@ -191,10 +191,10 @@ class BudgetTests(unittest.TestCase):
 
     def test_defaults_come_from_config(self):
         b = br.Budget()
-        self.assertEqual((b.max_calls, b.max_tokens), (200, 1_500_000))
+        self.assertEqual((b.max_calls, b.max_tokens), (18, 1_500_000))
 
     def test_about_fifty_full_analyses_fit_in_the_default_token_budget(self):
-        b, n = br.Budget(), 0
+        b, n = br.Budget(max_calls=200), 0      # a high call cap, so only the token budget limits it
         while b.can_afford(br.estimate_tokens(config.BATCH_MAX_PROMPT_CHARS)):
             b.charge(br.estimate_tokens(config.BATCH_MAX_PROMPT_CHARS))
             n += 1
@@ -309,7 +309,7 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(c["by_matrix"]["delta"], 1)
         self.assertEqual(c["by_matrix"]["stale"], 1)
         self.assertEqual((c["gemini_calls"], c["est_tokens"], c["max_calls"], c["max_tokens"]),
-                         (3, 90_000, 200, 1_500_000))
+                         (3, 90_000, 18, 1_500_000))
 
     def test_the_public_log_never_shows_a_ticker(self):
         lines = br.public_log_lines(br.summary_counts(self.ROWS, calls=3, est_tokens=90_000))
@@ -317,7 +317,7 @@ class SummaryTests(unittest.TestCase):
         for row in self.ROWS:
             self.assertNotIn(row["ticker"], text)
         self.assertIn("Batch run: 5 tickers", text)
-        self.assertIn("Gemini calls: 3 of 200; estimated tokens 90,000 of 1,500,000", text)
+        self.assertIn("Gemini calls: 3 of 18; estimated tokens 90,000 of 1,500,000", text)
 
     def test_unknown_statuses_are_not_counted(self):
         c = br.summary_counts([{"status": "weird", "matrix": "nope"}])
@@ -374,11 +374,24 @@ class QuotaAndQueueTests(unittest.TestCase):
         self.assertEqual(config.BATCH_QUEUE_FILE.name, "queue.csv")
 
 
+class FreeTierLimitTests(unittest.TestCase):
+    """The owner's Gemini free tier (Rate limit page, 10 Nov 2026): 5 requests a minute, 20 requests a day."""
+
+    def test_the_call_cap_and_pace_stay_inside_the_free_tier(self):
+        self.assertLessEqual(config.BATCH_MAX_CALLS_PER_RUN, 20)
+        self.assertLess(config.RATE_LIMIT_PER_MINUTE, 5)
+        self.assertEqual(config.RATE_LIMIT_PER_MINUTE, 4)
+
+    def test_the_shared_limiter_spaces_calls_at_least_fifteen_seconds_apart(self):
+        import pipeline
+        self.assertAlmostEqual(pipeline._LIMITER.min_interval, 15.0)
+
+
 class ConfigTests(unittest.TestCase):
     def test_the_v2_values_and_the_batch_prefix(self):
         self.assertEqual(config.ANALYSIS_MAX_AGE_DAYS, 90)
         self.assertEqual(config.FINANCIAL_CHANGE_THRESHOLD_PCT, 5.0)
-        self.assertEqual(config.BATCH_MAX_CALLS_PER_RUN, 200)
+        self.assertEqual(config.BATCH_MAX_CALLS_PER_RUN, 18)   # was 200 in v2.0; free tier allows 20 a day (Step B7)
         self.assertEqual(config.BATCH_MAX_TOKENS_PER_RUN, 1_500_000)
         self.assertEqual(config.MAX_CONSECUTIVE_FAILURES, 3)
         self.assertIn("batch/", config.PERSIST_PREFIXES)
