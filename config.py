@@ -1,6 +1,6 @@
 """
 config.py
-Version: Step B6, v0.15.0 (2026-11-09). Code version 2026-11-stepB6.
+Version: Step B7, v0.15.1 (2026-11-10). Code version 2026-11-stepB7.
 Spec: README v3.1 DRAFT (v2.0 is binding where it differs).
 
 Purpose: constants, paths, versions, secret lookup, start-up checks.
@@ -26,6 +26,9 @@ Changes in v0.14.0 (Step B4): added BATCH_STOP_AFTER_QUOTA_ERRORS and BATCH_QUEU
 Changes in v0.14.1 (Step B5): only CODE_VERSION changed.
 Changes in v0.14.2 (Step B5a): only CODE_VERSION changed.
 Changes in v0.15.0 (Step B6): added the app_password secret name (APP_PASSWORD).
+Changes in v0.15.1 (Step B7): two values changed for the owner's Gemini free tier (limits seen on the Google AI
+Studio Rate limit page on 10 Nov 2026: 5 requests a minute, 20 requests a day): RATE_LIMIT_PER_MINUTE 5 to 4 and
+BATCH_MAX_CALLS_PER_RUN 200 to 18. Both are deviations from the README v2.0 values and are APPROVED by the owner.
 PROMPT_VERSION: unchanged (2026-11-v3). No bump needed.
 """
 from __future__ import annotations
@@ -37,7 +40,7 @@ from pathlib import Path
 from errors import ConfigError
 
 # ---------------------------------------------------------------- versions
-CODE_VERSION = "2026-11-stepB6"
+CODE_VERSION = "2026-11-stepB7"
 SPEC_VERSION = "v3.1-draft"
 PROMPT_VERSION = "2026-11-v3"  # bump whenever the prompt, JSON schema or scoring changes (v2.0 used 2026-10-v2)
 SCHEMA_VERSION = 1
@@ -93,7 +96,7 @@ GEMINI_MAX_ATTEMPTS = 5
 GEMINI_INITIAL_DELAY = 2.0      # seconds, first backoff (recovered from the old reconstruction)
 GEMINI_MAX_DELAY = 30.0         # seconds, backoff ceiling (recovered from the old reconstruction)
 GEMINI_MAX_WAIT_SECONDS = 90.0  # NEW safety limit: if Google asks for a longer wait, stop retrying
-RATE_LIMIT_PER_MINUTE = 5
+RATE_LIMIT_PER_MINUTE = 4   # was 5 (v2.0). The free tier allows 5 a minute; 4 keeps clear of it (Step B7)
 ALLOW_NO_FILING_ANALYSIS = True  # analyse even with no filings (the scorer then caps the score at 54)
 LLM_CACHE_ENABLED = True         # reuse an identical analysis within the same inputs
 HORIZON = "the next 2 quarters (about 6 months)"   # wording used inside the prompt
@@ -164,7 +167,7 @@ MANUAL_FIELDS = {
 # The first five are the README v2.0 configuration values (README v3.3 section 10).
 ANALYSIS_MAX_AGE_DAYS = 90            # an analysis older than this is re-run (matrix row "stale")
 FINANCIAL_CHANGE_THRESHOLD_PCT = 5.0  # drift above this marks the row "financials_only"
-BATCH_MAX_CALLS_PER_RUN = 200         # Gemini calls allowed in one batch run
+BATCH_MAX_CALLS_PER_RUN = 18          # was 200 (v2.0). The free tier allows 20 requests a day; 18 leaves a small margin (Step B7)
 BATCH_MAX_TOKENS_PER_RUN = 1_500_000  # estimated tokens allowed in one batch run
 MAX_CONSECUTIVE_FAILURES = 3          # failed runs in a row before a ticker is skipped
 BATCH_CHARS_PER_TOKEN = 4             # [CONFIRM] implied by v2.0: 120,000 characters is about 30k tokens
