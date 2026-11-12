@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
     inputs:
       limit:
-        description: "Only the first N tickers (leave blank for all)"
+        description: "TRIAL ONLY: run just the first N tickers. Leave EMPTY for a normal run. Does not limit Gemini calls (the cap is 18 per run)."
         required: false
-        default: "3"
+        default: ""
 permissions:
   contents: read
 concurrency:
